@@ -44,7 +44,7 @@ async function processDocumentChunk(
   const contentText = contentToText(content);
   const chunkInfo = totalChunks > 1 ? ` (Part ${chunkIndex + 1} of ${totalChunks})` : '';
   
-  const prompt = `You are an expert document analyst. Your task is to extract and summarize key information from the provided document content based on the specified extraction scope.
+  const prompt = `You are an expert document analyst. Your task is to extract and summarize key information from the provided document content based on the specified extraction scope. Key information is defined according to the scope, where scope description will tell you what to focus during your extraction.
 
 EXTRACTION SCOPE: ${extractionScope}
 SCOPE DESCRIPTION: ${scopeDescription}
@@ -54,8 +54,17 @@ INSTRUCTIONS:
 2. Extract key facts, figures, and insights that align with the scope description
 3. Maintain accuracy and cite specific details when available
 4. If the content doesn't contain relevant information for this scope, state that clearly
-5. Be concise but comprehensive in your analysis
-6. NEVER PARAPRASE, always use the exact words from the document
+5. Be concise but comprehensive in your analysis. You don’t have a set page limit. Include the information you access valid to that scope
+6. NEVER PARAPHRASE, always use the exact words from the document
+7. NEVER ADD NEW INFORMATION. You are a summary tool, all the information in the summary MUST come from the document. Don’t infer or calculate.
+8. ONLY include information relevant to the scope
+
+EXECUTION GUIDELINES:
+Think step by step. In your execution, you should follow these steps:
+- Step 1: Analyze the scope description and define what are the items to look for in the document. 
+- Step 2: Remember the INSTRUCTIONS before continuing
+- Step 3: Go through the document and extract information relevant to the aforementioned plan
+- Step 4: Comprise the final result
 
 ${chunkInfo}
 
@@ -108,22 +117,21 @@ async function combineSummaries(
   const prompt = `You are an expert document analyst. You have received summaries from different parts of the same document. Your task is to create a comprehensive, cohesive final summary.
 
 DOCUMENT: ${filename}
-EXTRACTION SCOPE: ${extractionScope}
-SCOPE DESCRIPTION: ${scopeDescription}
 
 INSTRUCTIONS:
 1. Combine the information from all parts into a single, cohesive summary
 2. Remove redundancy and consolidate similar information
 3. Maintain all key facts, figures, and insights
-4. Ensure the final summary flows logically and covers all relevant aspects
-5. Focus on the "${extractionScope}" scope throughout
-6. NEVER PARAPRASE, always use the exact words from the document
+4. Ensure the final summary flows logically
+5. NEVER PARAPHRASE, always use the exact words from the document
+6. NEVER ADD NEW INFORMATION. You are a summary tool, all the information in the summary MUST come from the parts. Don’t infer or calculate.
+7. You don’t have a set page limit. Your goal is to combine the summaries into a single document making sure to remove redundancy and consolidate similar information.
 
 PART SUMMARIES:
 ${combinedSummaries}
 
 OUTPUT INSTRUCTIONS:
-Provide the final summary as markdown text and prefer to use bullet points and lists to make it more concise. NEVER PARAPRASE, always use the exact words from the document. Output only the summary, no other text.`;
+Provide the final summary as markdown text and prefer to use bullet points and lists to make it more concise. NEVER PARAPHRASE, always use the exact words from the document. Output only the summary, no other text.`;
 
   try {
     const completion = await groq.chat.completions.create({

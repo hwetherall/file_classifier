@@ -23,6 +23,7 @@ interface FileStatus {
   isChunked?: boolean; // Whether file was chunked for upload
   isAutoChunked?: boolean; // Whether file was auto-chunked based on token count
   autoChunkCount?: number; // Number of auto chunks created
+  selectedChunkCount?: number; // User-selected chunk count for retry
 }
 
 interface SummaryResponse {
@@ -94,7 +95,8 @@ export default function DocumentPCA() {
     const initialStatuses: FileStatus[] = files.map(file => ({
       file,
       status: 'uploading',
-      retryCount: 0
+      retryCount: 0,
+      selectedChunkCount: 3 // Default to 3 chunks
     }));
     setFileStatuses(initialStatuses);
 
@@ -144,7 +146,13 @@ export default function DocumentPCA() {
         } catch (error: any) {
           // Update status to error
           setFileStatuses(prev => prev.map((fs, idx) => 
-            idx === index ? { ...fs, status: 'error', error: error.message, retryCount: 0 } : fs
+            idx === index ? { 
+              ...fs, 
+              status: 'error', 
+              error: error.message, 
+              retryCount: 0,
+              selectedChunkCount: fs.selectedChunkCount || 3 // Ensure default chunk count
+            } : fs
           ));
         }
       });
@@ -157,47 +165,67 @@ export default function DocumentPCA() {
     }
   };
 
-  const handleRetryFile = async (fileIndex: number) => {
+  const handleChunkCountChange = (fileIndex: number, chunkCount: number) => {
+    setFileStatuses(prev => prev.map((fs, idx) => 
+      idx === fileIndex ? { ...fs, selectedChunkCount: chunkCount } : fs
+    ));
+  };
+
+  const handleRetryFile = async (fileIndex: number, retryAsOriginal: boolean = false) => {
     const fileStatus = fileStatuses[fileIndex];
     const newRetryCount = fileStatus.retryCount + 1;
     
-    // Don't allow more than 3 attempts
-    if (newRetryCount > 3) {
+    // Don't allow unlimited attempts
+    if (newRetryCount > 10) {
       return;
     }
+    
+    // Determine if this should be a chunked retry
+    const shouldChunk = !retryAsOriginal && fileStatus.selectedChunkCount && fileStatus.selectedChunkCount > 1;
     
     // Update status to uploading and increment retry count
     setFileStatuses(prev => prev.map((fs, idx) => 
       idx === fileIndex ? { 
         ...fs, 
-        status: 'uploading', 
+        status: 'uploading' as FileUploadStatus, 
         error: undefined, 
         retryCount: newRetryCount,
-        chunkingAttempt: newRetryCount > 1 ? newRetryCount : undefined,
-        isChunked: newRetryCount > 1
+        chunkingAttempt: shouldChunk ? fileStatus.selectedChunkCount : undefined,
+        isChunked: shouldChunk ? true : undefined
       } : fs
     ));
 
     try {
       let data;
       
-      if (newRetryCount === 1) {
-        // First retry: try original file again
+      if (!shouldChunk) {
+        // Retry with original file
         console.log(`Retry ${newRetryCount}: Uploading original file`);
         data = await uploadFileToJuicer(fileStatus.file.file);
       } else {
-        // Second retry (3 chunks) or third retry (12 chunks)
-        const chunkCount = newRetryCount === 2 ? 3 : 12;
-        console.log(`Retry ${newRetryCount}: Chunking file into ${chunkCount} parts`);
+        // Retry with user-selected chunk count
+        const chunkCount = fileStatus.selectedChunkCount!;
+        console.log(`Retry ${newRetryCount}: Chunking file into ${chunkCount} parts (user selected)`);
         
         // Read file content first
         const fileContent = await readFileContent(fileStatus.file.file);
         
-        // Chunk the content by tokens (divide target tokens by chunk count)
-        const targetTokensPerChunk = Math.floor(10000 / chunkCount); // Ensure smaller chunks
+        // Count actual tokens in the document and divide by requested chunk count
+        const documentTokens = countTokens(fileContent);
+        const idealTokensPerChunk = Math.floor(documentTokens / chunkCount);
+        
+        // Ensure minimum chunk size of 500 tokens to avoid too-small chunks
+        const targetTokensPerChunk = Math.max(idealTokensPerChunk, 500);
+        
+        if (targetTokensPerChunk === idealTokensPerChunk) {
+          console.log(`Document has ${documentTokens} tokens, creating ${chunkCount} chunks of ~${targetTokensPerChunk} tokens each`);
+        } else {
+          console.log(`Document has ${documentTokens} tokens, but enforcing minimum 500 tokens per chunk (would have been ${idealTokensPerChunk})`);
+        }
+        
         const { chunks } = chunkDocumentByTokens(fileContent, targetTokensPerChunk);
         
-        console.log(`Created ${chunks.length} chunks, uploading each separately`);
+        console.log(`Created ${chunks.length} actual chunks, uploading each separately`);
         
         // Upload each chunk and collect results
         const chunkResults: any[] = [];
@@ -480,7 +508,7 @@ export default function DocumentPCA() {
       <div className="min-h-screen bg-gray-50">
         <div className="max-w-7xl mx-auto px-4 py-8">
           <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold text-gray-900 mb-2">Document PCA</h1>
+            <h1 className="text-4xl font-bold text-gray-900 mb-2">Document Squeezer</h1>
             <p className="text-gray-600">Extract key information and produce dense summarized versions</p>
           </div>
 
@@ -720,15 +748,26 @@ export default function DocumentPCA() {
                           </svg>
                         </div>
                         <button
-                          onClick={() => handleRetryFile(index)}
-                          disabled={fileStatus.retryCount >= 3}
+                          onClick={() => handleRetryFile(index, true)}
+                          disabled={fileStatus.retryCount >= 10}
                           className={`px-2 py-1 text-white text-xs rounded transition-colors ${
-                            fileStatus.retryCount >= 3 
+                            fileStatus.retryCount >= 10 
+                              ? 'bg-gray-400 cursor-not-allowed' 
+                              : 'bg-blue-500 hover:bg-blue-600'
+                          }`}
+                        >
+                          Retry Original
+                        </button>
+                        <button
+                          onClick={() => handleRetryFile(index, false)}
+                          disabled={fileStatus.retryCount >= 10 || !fileStatus.selectedChunkCount}
+                          className={`px-2 py-1 text-white text-xs rounded transition-colors ${
+                            fileStatus.retryCount >= 10 || !fileStatus.selectedChunkCount
                               ? 'bg-gray-400 cursor-not-allowed' 
                               : 'bg-red-500 hover:bg-red-600'
                           }`}
                         >
-                          {fileStatus.retryCount >= 3 ? 'Max Retries' : `Retry (${fileStatus.retryCount}/3)`}
+                          Retry Chunked
                         </button>
                       </div>
                     )}
@@ -736,32 +775,53 @@ export default function DocumentPCA() {
                 </div>
                 
                 {fileStatus.status === 'error' && fileStatus.error && (
-                  <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-sm">
-                    <div className="text-red-700 font-medium">Upload Error:</div>
-                    <div className="text-red-600">{fileStatus.error}</div>
+                  <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded text-sm space-y-3">
+                    <div>
+                      <div className="text-red-700 font-medium">Upload Error:</div>
+                      <div className="text-red-600">{fileStatus.error}</div>
+                    </div>
+                    
                     {fileStatus.retryCount > 0 && (
-                      <div className="text-gray-600 mt-1">
-                        Attempts: {fileStatus.retryCount}/3
-                                                 {fileStatus.chunkingAttempt && (
-                           <span className="ml-2 text-blue-600">
-                             (Chunked into {fileStatus.chunkingAttempt === 2 ? '3' : '12'} parts)
-                           </span>
-                         )}
+                      <div className="text-gray-600">
+                        <div>Attempts: {fileStatus.retryCount}/10</div>
+                        {fileStatus.chunkingAttempt && (
+                          <div className="text-blue-600">
+                            Last attempt: Chunked into {fileStatus.chunkingAttempt} parts
+                          </div>
+                        )}
                       </div>
                     )}
-                    {fileStatus.retryCount === 0 && (
-                      <div className="text-gray-500 mt-1 text-xs">
-                        Next retry will attempt chunking into 3 parts
+                    
+                    <div className="space-y-2">
+                      <div className="text-gray-700 font-medium">Retry Options:</div>
+                      <div className="flex items-center space-x-2">
+                        <label htmlFor={`chunk-select-${index}`} className="text-xs text-gray-600">
+                          Chunk into:
+                        </label>
+                        <select
+                          id={`chunk-select-${index}`}
+                          value={fileStatus.selectedChunkCount || 3}
+                          onChange={(e) => handleChunkCountChange(index, parseInt(e.target.value))}
+                          className="text-xs px-2 py-1 border border-gray-300 rounded focus:ring-1 focus:ring-purple-500 focus:border-purple-500"
+                        >
+                          <option value={2}>2 parts</option>
+                          <option value={3}>3 parts</option>
+                          <option value={5}>5 parts</option>
+                          <option value={10}>10 parts</option>
+                          <option value={15}>15 parts</option>
+                          <option value={20}>20 parts</option>
+                        </select>
+                        <span className="text-xs text-gray-500">parts</span>
                       </div>
-                    )}
-                                         {fileStatus.retryCount === 1 && (
-                       <div className="text-gray-500 mt-1 text-xs">
-                         Next retry will chunk into 12 parts
-                       </div>
-                     )}
-                    {fileStatus.retryCount >= 3 && (
-                      <div className="text-gray-500 mt-1 text-xs">
-                        Maximum retry attempts reached
+                      <div className="text-xs text-gray-500">
+                        • Use &ldquo;Retry Original&rdquo; to try the whole file again<br/>
+                        • Use &ldquo;Retry Chunked&rdquo; to split the file into smaller pieces
+                      </div>
+                    </div>
+                    
+                    {fileStatus.retryCount >= 10 && (
+                      <div className="text-gray-500 text-xs">
+                        Maximum retry attempts reached (10/10)
                       </div>
                     )}
                   </div>
@@ -801,9 +861,11 @@ export default function DocumentPCA() {
                     {fileStatus.summary && fileStatus.summaryStatus === 'completed' && (
                       <div className="space-y-2">
                         <div className="text-xs text-gray-500">
-                          Summary: {fileStatus.summary.wordCount.toLocaleString()} words
-                          {fileStatus.summary.tokenCount && `, ~${fileStatus.summary.tokenCount.toLocaleString()} tokens`}
-                          , {fileStatus.summary.chunkCount} chunk(s)
+                          {(() => {
+                            const summaryAnalysis = analyzeText(fileStatus.summary.summary);
+                            return `Summary: ${summaryAnalysis.wordCount.toLocaleString()} words, ~${summaryAnalysis.tokenCount.toLocaleString()} tokens`;
+                          })()}
+                          {fileStatus.summary.chunkCount > 1 && ` (from ${fileStatus.summary.chunkCount} chunks)`}
                         </div>
                         <button
                           onClick={() => handleDownloadSummary(fileStatus)}
