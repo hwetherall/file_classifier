@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Read instructions from JSON file
-    const sectionInstructionsPath = path.join(process.cwd(), 'data', 'section-prompts.json');
+    const sectionInstructionsPath = path.join(process.cwd(), 'data', 'instructions', 'section-prompts.json');
     let instructions = '';
     
     try {
@@ -38,15 +38,17 @@ export async function POST(request: NextRequest) {
     }
 
     const prompt = `
-You are a prompt generation assistant. Your task is to create the prompts for several sections of a chapter in an investment memo. The RUBRICS define the sections that should be created and the INSTRUCTIONS stablishes how the sections should be written as prompts.
+You are a prompt generation assistant. Your task is to create the prompts for several sections of a chapter in an investment memo. 
 
-Ensure the final prompt maintains consistency with the original instructions while incorporating the evaluation criteria and requirements specified in the rubrics.
+Analyze the RUBRICS to define the sections that should be created. Then, for each section, follow the INSTRUCTIONS to write those sections as prompts. A section prompt is a prompt that will be used to generate a section of the investment memo.
 
-## INSTRUCTIONS:
-${instructions}
+Ensure to follow the INSTRUCTIONS.
 
 ## RUBRICS:
 ${body.rubrics}
+
+## INSTRUCTIONS:
+${instructions}
 
 ## OUTPUT FORMAT:
 Format your response as a JSON object with the following fields:
@@ -68,7 +70,7 @@ Verify that the OUTPUT FORMAT is correct and that the JSON is properly formatted
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: 'anthropic/claude-opus-4.1',
+        model: 'openai/gpt-4.1-mini', // anthropic/claude-opus-4.1 / openai/gpt-4.1-mini
         messages: [
           {
             role: 'user',
@@ -87,8 +89,36 @@ Verify that the OUTPUT FORMAT is correct and that the JSON is properly formatted
     const data = await response.json();
     const content = data.choices[0].message.content;
     
+    // Clean the response - remove markdown code blocks if present
+    const cleanJsonResponse = (text: string): string => {
+      // Remove markdown code blocks (```json ... ``` or ``` ... ```)
+      let cleaned = text.trim();
+      
+      // Remove leading ```json, ```JSON, or ``` (case insensitive)
+      cleaned = cleaned.replace(/^```(?:json|JSON)?\s*/i, '');
+      
+      // Remove trailing ```
+      cleaned = cleaned.replace(/\s*```\s*$/, '');
+      
+      // Remove any extra whitespace
+      cleaned = cleaned.trim();
+      
+      // Handle edge case where JSON might be inside other markdown formatting
+      // Look for the first { and last } to extract just the JSON part
+      const firstBrace = cleaned.indexOf('{');
+      const lastBrace = cleaned.lastIndexOf('}');
+      
+      if (firstBrace !== -1 && lastBrace !== -1 && firstBrace < lastBrace) {
+        cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+      }
+      
+      return cleaned;
+    };
+    
+    const cleanedContent = cleanJsonResponse(content);
+    
     try {
-      const parsedResponse = JSON.parse(content);
+      const parsedResponse = JSON.parse(cleanedContent);
       // Validate the structure of the response
       if (
         parsedResponse.section_prompts && 
@@ -99,12 +129,21 @@ Verify that the OUTPUT FORMAT is correct and that the JSON is properly formatted
           data: parsedResponse.section_prompts
         });
       } else {
-        throw new Error('Malformed response from OpenRouter');
+        throw new Error('Malformed response from LLM');
       }
     } catch (parseError) {
-      console.error('Failed to parse OpenRouter response:', parseError);
+      console.error('Failed to parse LLM response:', parseError);
+      console.error('Raw content:', content);
+      console.error('Cleaned content:', cleanedContent);
+      
+      // Provide more helpful error message
+      let errorMessage = 'Invalid JSON response from LLM';
+      if (parseError instanceof SyntaxError) {
+        errorMessage = `JSON parsing failed: ${parseError.message}`;
+      }
+      
       return NextResponse.json({
-        error: "Failed to generate prompt due to an error"
+        error: errorMessage
       }, { status: 500 });
     }
   } catch (error) {

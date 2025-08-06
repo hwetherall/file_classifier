@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import FileUploadZone from '../ui/custom/FileUpload/FileUploadZone';
 import { DocumentFile } from '../../types/document';
+import { extractTextFromFile } from '../../lib/services/frontend/extractors';
 
 type ToggleState = 'rubrics' | 'context';
 
@@ -12,28 +13,27 @@ interface FileWithChapter {
   selectedChapter: string;
 }
 
-interface UploadStepProps {
+interface SetupStepProps {
   onPromptGeneration: (extractedDocuments: { fileName: string; chapter: string; text: string }[]) => void;
 }
 
-export default function UploadStep({ onPromptGeneration }: UploadStepProps) {
+export default function SetupStep({ onPromptGeneration }: SetupStepProps) {
   const [selectedToggle, setSelectedToggle] = useState<ToggleState>('rubrics');
   const [files, setFiles] = useState<DocumentFile[]>([]);
   const [filesWithChapters, setFilesWithChapters] = useState<FileWithChapter[]>([]);
   const [chapters, setChapters] = useState<string[]>([]);
   const [isLoadingChapters, setIsLoadingChapters] = useState(true);
-  const [isGenerating, setIsGenerating] = useState(false);
 
   // Load chapters from JSON file
   useEffect(() => {
     const loadChapters = async () => {
       try {
-        const response = await fetch('/data/chapters.json');
+        const response = await fetch('/data/prompt_builder/chapter_templates.json');
         if (!response.ok) {
           throw new Error('Failed to load chapters');
         }
         const data = await response.json();
-        setChapters(data.chapters);
+        setChapters(Object.keys(data));
       } catch (error) {
         console.error('Error loading chapters:', error);
       } finally {
@@ -81,16 +81,11 @@ export default function UploadStep({ onPromptGeneration }: UploadStepProps) {
   const handleGeneratePrompts = async () => {
     if (!allChaptersSelected) return;
     
-    setIsGenerating(true);
-    
     try {
       console.log('Starting prompt generation for:', filesWithChapters);
       
       // Extract text from all files
       const extractedTexts: { fileName: string; chapter: string; text: string }[] = [];
-      
-      // Dynamic import to avoid SSR issues
-      const { extractTextFromFile } = await import('../../lib/services/frontend/extractors');
       
       for (const item of filesWithChapters) {
         try {
@@ -103,9 +98,8 @@ export default function UploadStep({ onPromptGeneration }: UploadStepProps) {
             text: text
           });
           
-          console.log(`✅ Successfully extracted ${text.length} characters from ${item.file.name}`);
         } catch (error) {
-          console.error(`❌ Failed to extract text from ${item.file.name}:`, error);
+          console.error(`Failed to extract text from ${item.file.name}:`, error);
           throw new Error(`Failed to extract text from ${item.file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
       }
@@ -118,8 +112,6 @@ export default function UploadStep({ onPromptGeneration }: UploadStepProps) {
     } catch (error) {
       console.error('Error during prompt generation:', error);
       alert(`Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`);
-    } finally {
-      setIsGenerating(false);
     }
   };
 
@@ -233,21 +225,14 @@ export default function UploadStep({ onPromptGeneration }: UploadStepProps) {
                   <div className="flex justify-center pt-4">
                     <button
                       onClick={handleGeneratePrompts}
-                      disabled={!allChaptersSelected || isGenerating}
+                      disabled={!allChaptersSelected}
                       className={`px-6 py-3 rounded-lg font-medium transition-colors ${
-                        allChaptersSelected && !isGenerating
+                        allChaptersSelected
                           ? 'bg-green-600 text-white hover:bg-green-700'
                           : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                       }`}
                     >
-                      {isGenerating ? (
-                        <div className="flex items-center space-x-2">
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                          <span>Generating...</span>
-                        </div>
-                      ) : (
-                        'Generate Prompts'
-                      )}
+                      Generate Prompts
                     </button>
                   </div>
                 )}

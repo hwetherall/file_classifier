@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 
 interface ExtractedDocument {
   fileName: string;
@@ -8,17 +8,23 @@ interface ExtractedDocument {
   text: string;
 }
 
-interface DocumentViewerProps {
-  extractedDocuments: ExtractedDocument[];
-  onBackToUpload: () => void;
+interface ChapterPromptState {
+  loading: boolean;
+  error?: string;
+  prompts?: { [key: string]: string };
 }
 
-export default function DocumentViewer({ extractedDocuments, onBackToUpload }: DocumentViewerProps) {
+interface DocumentViewerProps {
+  extractedDocuments: ExtractedDocument[];
+  chapterPromptStates: { [chapter: string]: ChapterPromptState };
+  onBackToUpload: () => void;
+  onUpdatePromptContent: (chapter: string, sectionName: string, content: string) => void;
+}
+
+export default function DocumentViewer({ extractedDocuments, chapterPromptStates, onBackToUpload, onUpdatePromptContent }: DocumentViewerProps) {
   const [selectedChapter, setSelectedChapter] = useState<string>('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(0);
-  const [showPagePopup, setShowPagePopup] = useState(false);
-  const [editableDocuments, setEditableDocuments] = useState<ExtractedDocument[]>([]);
+  const [chapterTemplates, setChapterTemplates] = useState<{ [chapter: string]: string }>({});
+  const [filledTemplates, setFilledTemplates] = useState<{ [chapter: string]: string }>({});
 
   // Get unique chapters from extracted documents
   const availableChapters = useMemo(() => 
@@ -26,45 +32,158 @@ export default function DocumentViewer({ extractedDocuments, onBackToUpload }: D
     [extractedDocuments]
   );
 
-  // Initialize editable documents when extractedDocuments change
+  // Load chapter templates
   useEffect(() => {
-    setEditableDocuments([...extractedDocuments]);
-  }, [extractedDocuments]);
+    const loadChapterTemplates = async () => {
+      try {
+        const response = await fetch('/data/prompt_builder/chapter_templates.json');
+        if (!response.ok) {
+          throw new Error('Failed to load chapter templates');
+        }
+        const data = await response.json();
+        setChapterTemplates(data);
+      } catch (error) {
+        console.error('Error loading chapter templates:', error);
+      }
+    };
 
-  // Get documents for selected chapter
-  const selectedDocuments = editableDocuments.filter(doc => doc.chapter === selectedChapter);
+    loadChapterTemplates();
+  }, []);
 
-  // Split text into pages based on calculated lines per page
-  // Usable content area: 654x894 pixels
-  // Font: 11pt = 14.67px, Line height: 1.5 = 22px
-  // Lines per page: 894px / 22px = 40.6 ≈ 40 lines
-  const splitIntoPages = (text: string, linesPerPage: number = 40): string[] => {
-    // Split text into lines first, preserving original line breaks
-    const lines = text.split('\n');
-    const pages: string[] = [];
+  // Calculate visual lines for a single paragraph (reusable function)
+  const calculateParagraphLines = useCallback((paragraph: string): number => {
+    if (paragraph === '') return 1;
     
-    for (let i = 0; i < lines.length; i += linesPerPage) {
-      const pageLines = lines.slice(i, i + linesPerPage);
-      pages.push(pageLines.join('\n'));
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d')!;
+    context.font = '11pt system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    const maxWidth = 654;
+    
+    const lineWidth = context.measureText(paragraph).width;
+    if (lineWidth <= maxWidth) {
+      return 1; // Line fits in one visual line
+    }
+    
+    // Line needs to be wrapped - calculate how many visual lines it needs
+    const words = paragraph.split(' ');
+    let currentLineWidth = 0;
+    let wrappedLines = 1;
+    
+    for (const word of words) {
+      const wordWidth = context.measureText(word + ' ').width;
+      if (currentLineWidth + wordWidth > maxWidth) {
+        wrappedLines += 1;
+        currentLineWidth = wordWidth;
+      } else {
+        currentLineWidth += wordWidth;
+      }
+    }
+    
+    return wrappedLines;
+  }, []);
+
+  // Calculate total actual line count including word wrapping
+  const calculateActualLines = useCallback((text: string): number => {
+    if (!text) return 1;
+    
+    const paragraphs = text.split('\n');
+    return paragraphs.reduce((total, paragraph) => total + calculateParagraphLines(paragraph), 0);
+  }, [calculateParagraphLines]);
+
+  // Split text into pages based on actual visual lines
+  // Content area: 654px x 894px
+  // Font: 11pt = 14.67px, Line height: 1.5 = 22px  
+  // Lines per page: 894px / 22px = 40.6 ≈ 40 lines
+  const splitIntoPages = useCallback((text: string, linesPerPage: number = 40): string[] => {
+    if (!text) return [''];
+    
+    const paragraphs = text.split('\n');
+    const pages: string[] = [];
+    let currentPageContent: string[] = []; // Store paragraphs for current page
+    let currentPageLines = 0;
+    
+    for (const paragraph of paragraphs) {
+      // Use the reusable function to calculate lines for this paragraph
+      const paragraphLines = calculateParagraphLines(paragraph);
+      
+      if (currentPageLines + paragraphLines > linesPerPage && currentPageContent.length > 0) {
+        // Start new page
+        pages.push(currentPageContent.join('\n'));
+        currentPageContent = [paragraph];
+        currentPageLines = paragraphLines;
+      } else {
+        // Add to current page
+        currentPageContent.push(paragraph);
+        currentPageLines += paragraphLines;
+      }
+    }
+    
+    // Add the last page
+    if (currentPageContent.length > 0) {
+      pages.push(currentPageContent.join('\n'));
     }
     
     return pages.length > 0 ? pages : [''];
-  };
+  }, [calculateParagraphLines]);
 
-  // Calculate total pages for selected documents
+  // Fill templates when prompts are generated
   useEffect(() => {
-    if (selectedDocuments.length > 0) {
-      const total = selectedDocuments.reduce((sum, doc) => {
-        const pages = splitIntoPages(doc.text);
-        return sum + pages.length;
-      }, 0);
-      setTotalPages(total);
-      setCurrentPage(1);
-    } else {
-      setTotalPages(0);
-      setCurrentPage(1);
-    }
-  }, [selectedDocuments]);
+    Object.entries(chapterPromptStates).forEach(([chapter, state]) => {
+      if (state.prompts && !state.loading && !state.error && !filledTemplates[chapter]) {
+        const template = chapterTemplates[chapter];
+        
+        if (template && template.trim() !== '') {
+          // Fill the template once and save it
+          let filledTemplate = template;
+          
+          // Replace sections number
+          const sectionsCount = Object.keys(state.prompts).length;
+          const sectionsNumberText = sectionsCount === 1 
+            ? "\n\nYour analysis will focus on one critical aspect, defined as a section:"
+            : `\n\nYour analysis will be divided into ${sectionsCount} critical aspects, defined as sections:`;
+          filledTemplate = filledTemplate.replace(/<replace-sections-number><\/replace-sections-number>/g, sectionsNumberText);
+          
+          // Replace name-role
+          const nameRoleEntries = Object.entries(state.prompts).map(([, promptContent]) => {
+            const lines = promptContent.split('\n');
+            let name = '';
+            let role = '';
+            
+            // Extract name from first line after "## Section:"
+            for (let i = 0; i < lines.length; i++) {
+              if (lines[i].includes('## Section:')) {
+                name = lines[i].replace('## Section:', '').trim();
+                break;
+              }
+            }
+            
+            // Extract role from line after "**Role**:"
+            for (let i = 0; i < lines.length; i++) {
+              if (lines[i].includes('**Role**:')) {
+                role = lines[i].replace('**Role**:', '').trim();
+                break;
+              }
+            }
+            
+            return `- ${name}: ${role}`;
+          });
+          
+          const nameRoleText = nameRoleEntries.join('\n');
+          filledTemplate = filledTemplate.replace(/<replace-name-role><\/replace-name-role>/g, nameRoleText);
+          
+          // Replace section prompts
+          const sectionPromptsText = Object.values(state.prompts).join('\n\n');
+          filledTemplate = filledTemplate.replace(/<replace-section_prompts><\/replace-section_prompts>/g, sectionPromptsText);
+          
+          // Save the filled template
+          setFilledTemplates(prev => ({
+            ...prev,
+            [chapter]: filledTemplate
+          }));
+        }
+      }
+    });
+  }, [chapterPromptStates, chapterTemplates, filledTemplates]);
 
   // Set initial chapter selection
   useEffect(() => {
@@ -72,41 +191,6 @@ export default function DocumentViewer({ extractedDocuments, onBackToUpload }: D
       setSelectedChapter(availableChapters[0]);
     }
   }, [availableChapters, selectedChapter]);
-
-  // Handle text changes
-  const handleTextChange = (docIndex: number, pageIndex: number, newContent: string) => {
-    setEditableDocuments(prev => {
-      const newDocs = [...prev];
-      const docToUpdate = newDocs.find((doc, idx) => 
-        doc.chapter === selectedChapter && idx === docIndex
-      );
-      
-      if (docToUpdate) {
-        const pages = splitIntoPages(docToUpdate.text);
-        pages[pageIndex] = newContent;
-        docToUpdate.text = pages.join('\n');
-      }
-      
-      return newDocs;
-    });
-  };
-
-  // Handle scroll to track current page and show popup
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const container = e.currentTarget;
-    const scrollTop = container.scrollTop;
-    const pageHeight = 11 * 96; // Approximate height of a page in pixels (11 inches * 96 DPI)
-    
-    const newCurrentPage = Math.floor(scrollTop / pageHeight) + 1;
-    
-    if (newCurrentPage !== currentPage) {
-      setCurrentPage(newCurrentPage);
-      setShowPagePopup(true);
-      
-      // Hide popup after 2 seconds
-      setTimeout(() => setShowPagePopup(false), 2000);
-    }
-  };
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -128,7 +212,9 @@ export default function DocumentViewer({ extractedDocuments, onBackToUpload }: D
         
         <div className="flex-1 overflow-y-auto">
           <nav className="py-2 px-2">
-            {availableChapters.map((chapter) => (
+            {availableChapters.map((chapter) => {
+              const promptState = chapterPromptStates[chapter];
+              return (
               <button
                 key={chapter}
                 onClick={() => setSelectedChapter(chapter)}
@@ -138,9 +224,45 @@ export default function DocumentViewer({ extractedDocuments, onBackToUpload }: D
                     : 'text-gray-700 hover:bg-gray-100'
                 }`}
               >
-                {chapter}
+                  <div className="flex items-center justify-between">
+                    <span>{chapter}</span>
+                    {promptState?.loading && (
+                      <div className="flex items-center">
+                        <svg className="w-3 h-3 text-blue-500 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle
+                            className="opacity-25"
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                          />
+                          <path
+                            className="opacity-75"
+                            fill="currentColor"
+                            d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                          />
+                        </svg>
+                      </div>
+                    )}
+                    {promptState?.error && (
+                      <div className="flex items-center">
+                        <svg className="w-3 h-3 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </div>
+                    )}
+                    {promptState?.prompts && !promptState.loading && !promptState.error && (
+                      <div className="flex items-center">
+                        <svg className="w-3 h-3 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
               </button>
-            ))}
+              );
+            })}
           </nav>
         </div>
 
@@ -161,60 +283,290 @@ export default function DocumentViewer({ extractedDocuments, onBackToUpload }: D
         </div>
 
         {/* Document Display Area - Google Docs style */}
-        <div className="flex-1 overflow-y-auto bg-[#f9fbff] relative" onScroll={handleScroll}>
-          {/* Page Popup */}
-          {showPagePopup && totalPages > 0 && (
-            <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-800 bg-opacity-90 text-white px-3 py-2 rounded-md text-xs font-medium z-50 pointer-events-none">
-              Page {currentPage} of {totalPages}
-            </div>
-          )}
+        <div className="flex-1 overflow-y-auto bg-[#f9fbff] relative">
           
-          <div className="py-8">
+          <div className="pt-8">
             <div className="max-w-[8.5in] mx-auto">
               {selectedChapter ? (
-                selectedDocuments.map((doc, docIndex) => {
-                  const pages = splitIntoPages(doc.text);
-                  return (
-                    <div key={`${doc.fileName}-${docIndex}`}>
-                      {/* Pages */}
-                      {pages.map((pageContent, pageIndex) => (
-                        <div 
-                          key={`page-${pageIndex}`} 
-                          className="bg-white shadow-sm border border-gray-200 mx-auto mb-6"
-                          style={{ 
-                            width: '8.5in', 
-                            height: '11in',
-                            overflow: 'hidden',
-                          }}
-                        >
-                          <textarea
-                             className="px-20 text-sm leading-normal text-gray-900 w-full h-full resize-none border-none outline-none bg-transparent [&::-webkit-scrollbar]:hidden"
-                             style={{
-                               fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                               fontSize: '11pt',
-                               lineHeight: '1.5',
-                               whiteSpace: 'pre-wrap',
-                               wordWrap: 'break-word',
-                               paddingTop: '80px', // Reserve space at top like Google Docs header
-                               paddingBottom: '80px', // Reserve space at bottom like Word documents
-                               overflow: 'hidden', // Prevent scrolling within the page
-                             }}
-                             value={pageContent}
-                             onChange={(e) => handleTextChange(docIndex, pageIndex, e.target.value)}
-                             spellCheck={false}
-                           />
+                <>
+                  {/* Loading state - same as before but at top */}
+                  {chapterPromptStates[selectedChapter]?.loading && (
+                    <div className="bg-white shadow-sm border border-gray-200 mx-auto mb-6 py-[80px] px-[80px]"
+                         style={{ width: '8.5in', height: '11in' }}>
+                      <div className="pt-20">
+                        <div className="text-center">
+                          <svg className="w-8 h-8 text-blue-500 animate-spin mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+                            <circle
+                              className="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              strokeWidth="4"
+                            />
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            />
+                          </svg>
+                          <h3 className="text-lg font-medium text-gray-800 mb-2">Generating Prompts</h3>
+                          <p className="text-gray-600">Creating dynamic prompts for {selectedChapter}...</p>
                         </div>
-                      ))}
-                      
-                      {/* Document separator */}
-                      {docIndex < selectedDocuments.length - 1 && (
-                        <div className="my-16 flex items-center justify-center">
-                          <div className="w-32 h-px bg-gray-300"></div>
-                        </div>
-                      )}
+                      </div>
                     </div>
-                  );
-                })
+                  )}
+                  
+                  {/* Error state - same as before but at top */}
+                  {chapterPromptStates[selectedChapter]?.error && (
+                    <div className="bg-white shadow-sm border border-red-200 mx-auto mb-6 py-[80px] px-[80px]"
+                         style={{ width: '8.5in', height: '11in' }}>
+                      <div className="pt-20">
+                        <div className="text-center">
+                          <svg className="w-8 h-8 text-red-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                          <h3 className="text-lg font-medium text-gray-800 mb-2">Error Generating Prompts</h3>
+                          <p className="text-gray-600 mb-4">{chapterPromptStates[selectedChapter].error}</p>
+                          <button 
+                            onClick={() => window.location.reload()}
+                            className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Display chapter template or fallback to sections */}
+                  {chapterPromptStates[selectedChapter]?.prompts && !chapterPromptStates[selectedChapter]?.loading && 
+                    (() => {
+                      const prompts = chapterPromptStates[selectedChapter].prompts!;
+                      const template = chapterTemplates[selectedChapter];
+                      const filledTemplate = filledTemplates[selectedChapter];
+                      
+                      // If template exists and is not empty, display the filled version
+                      if (template && template.trim() !== '' && filledTemplate) {
+                        const pages = splitIntoPages(filledTemplate);
+                        return pages.map((pageContent, pageIndex) => (
+                          <div 
+                            key={`template-page-${pageIndex}`} 
+                            className="bg-white shadow-sm border border-gray-200 mx-auto mb-6 py-[80px] px-[80px]"
+                            style={{ 
+                              width: '8.5in', 
+                              height: '11in',
+                              overflow: 'hidden',
+                            }}
+                          >
+                            <textarea
+                              data-page-index={pageIndex}
+                              className="text-sm leading-normal text-gray-900 w-full h-full resize-none border-none outline-none bg-transparent [&::-webkit-scrollbar]:hidden"
+                              style={{
+                                fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                                fontSize: '11pt',
+                                lineHeight: '1.5',
+                                whiteSpace: 'pre-wrap',
+                                wordWrap: 'break-word',
+                                overflow: 'hidden',
+                                padding: '0',
+                                margin: '0',
+                              }}
+                              value={pageContent}
+                              onChange={(e) => {
+                                // Handle content change with automatic page breaks
+                                const textarea = e.target as HTMLTextAreaElement;
+                                const cursorPosition = textarea.selectionStart;
+                                const newValue = textarea.value;
+                                const currentPages = [...pages];
+                                currentPages[pageIndex] = newValue;
+                                
+                                // Calculate absolute cursor position in the full content
+                                let absoluteCursorPosition = cursorPosition;
+                                for (let i = 0; i < pageIndex; i++) {
+                                  absoluteCursorPosition += currentPages[i].length + 1; // +1 for the page separator
+                                }
+                                
+                                // Check if content overflows current page using actual line counting
+                                const actualLines = calculateActualLines(newValue);
+                                const linesPerPage = 40;
+                                
+                                if (actualLines > linesPerPage) {
+                                  // Content overflows - redistribute across pages
+                                  const allContent = currentPages.join('\n');
+                                  const redistributedPages = splitIntoPages(allContent);
+                                  // Update the filled template with redistributed content
+                                  const updatedTemplate = redistributedPages.join('\n');
+                                  setFilledTemplates(prev => ({
+                                    ...prev,
+                                    [selectedChapter]: updatedTemplate
+                                  }));
+                                  
+                                  // After redistribution, find which page and position the cursor should be on
+                                  setTimeout(() => {
+                                    let charCount = 0;
+                                    let targetPageIndex = 0;
+                                    let targetCursorPosition = 0;
+                                    
+                                    for (let i = 0; i < redistributedPages.length; i++) {
+                                      const pageLength = redistributedPages[i].length;
+                                      
+                                      // Check if the cursor position falls within this page
+                                      if (absoluteCursorPosition <= charCount + pageLength) {
+                                        targetPageIndex = i;
+                                        targetCursorPosition = absoluteCursorPosition - charCount;
+                                        break;
+                                      }
+                                      
+                                      // Add page length + 1 for the separator (except for the last page)
+                                      charCount += pageLength;
+                                      if (i < redistributedPages.length - 1) {
+                                        charCount += 1; // +1 for page separator
+                                      }
+                                    }
+                                    
+                                    // Ensure cursor position is within bounds of the target page
+                                    if (targetPageIndex < redistributedPages.length) {
+                                      targetCursorPosition = Math.min(targetCursorPosition, redistributedPages[targetPageIndex].length);
+                                      targetCursorPosition = Math.max(0, targetCursorPosition);
+                                      
+                                      // Find the textarea for the target page
+                                      const targetTextarea = document.querySelector(`[data-page-index="${targetPageIndex}"]`) as HTMLTextAreaElement;
+                                      if (targetTextarea) {
+                                        // Store current scroll position to restore it after focus
+                                        const scrollContainer = targetTextarea.closest('.overflow-y-auto');
+                                        const currentScrollTop = scrollContainer?.scrollTop || 0;
+                                        
+                                        targetTextarea.focus({ preventScroll: true });
+                                        targetTextarea.setSelectionRange(targetCursorPosition, targetCursorPosition);
+                                        
+                                        // Restore scroll position
+                                        if (scrollContainer) {
+                                          scrollContainer.scrollTop = currentScrollTop;
+                                        }
+                                      }
+                                    }
+                                  }, 0);
+                                } else {
+                                  // Normal update within page limits
+                                  const updatedContent = currentPages.join('\n');
+                                  setFilledTemplates(prev => ({
+                                    ...prev,
+                                    [selectedChapter]: updatedContent
+                                  }));
+                                  
+                                  // Preserve cursor position for non-overflow cases
+                                  setTimeout(() => {
+                                    if (textarea) {
+                                      textarea.setSelectionRange(cursorPosition, cursorPosition);
+                                    }
+                                  }, 0);
+                                }
+                              }}
+                              onInput={(e) => {
+                                // Prevent scrolling within the textarea
+                                const target = e.target as HTMLTextAreaElement;
+                                if (target.scrollTop > 0) {
+                                  target.scrollTop = 0;
+                                }
+                              }}
+                              spellCheck={false}
+                            />
+                          </div>
+                        ));
+                      } else {
+                        // Fallback: display individual sections as before
+                        const promptEntries = Object.entries(prompts);
+                        
+                        return promptEntries.map(([sectionName, promptContent], sectionIndex) => {
+                          const pages = splitIntoPages(promptContent);
+                          return (
+                            <div key={`${sectionName}-${sectionIndex}`}>
+                              {/* Section Header */}
+                              <div className="mb-4">
+                                <h2 className="text-xl font-semibold text-gray-800 mb-2">{sectionName}</h2>
+                              </div>
+                              
+                              {/* Pages for this section */}
+                              {pages.map((pageContent, pageIndex) => (
+                                <div 
+                                  key={`${sectionName}-page-${pageIndex}`} 
+                                  className="bg-white shadow-sm border border-gray-200 mx-auto mb-6 py-[80px] px-[80px]"
+                                  style={{ 
+                                    width: '8.5in', 
+                                    height: '11in',
+                                    overflow: 'hidden',
+                                  }}
+                                >
+                                  <textarea
+                                    data-page-index={pageIndex}
+                                    className="text-sm leading-normal text-gray-900 w-full h-full resize-none border-none outline-none bg-transparent [&::-webkit-scrollbar]:hidden"
+                                    style={{
+                                      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                                      fontSize: '11pt',
+                                      lineHeight: '1.5',
+                                      whiteSpace: 'pre-wrap',
+                                      wordWrap: 'break-word',
+                                      overflow: 'hidden',
+                                      padding: '0',
+                                      margin: '0',
+                                    }}
+                                    value={pageContent}
+                                    onChange={(e) => {
+                                      // Handle content change with automatic page breaks
+                                      const textarea = e.target as HTMLTextAreaElement;
+                                      const cursorPosition = textarea.selectionStart;
+                                      const newValue = textarea.value;
+                                      const currentPages = [...pages];
+                                      currentPages[pageIndex] = newValue;
+                                      
+                                      // Check if content overflows current page using actual line counting
+                                      const actualLines = calculateActualLines(newValue);
+                                      const linesPerPage = 40;
+                                      
+                                      if (actualLines > linesPerPage) {
+                                        // Content overflows - redistribute across pages
+                                        const allContent = currentPages.join('\n');
+                                        const redistributedPages = splitIntoPages(allContent);
+                                        onUpdatePromptContent(selectedChapter, sectionName, redistributedPages.join('\n'));
+                                      } else {
+                                        // Normal update within page limits
+                                        const updatedContent = currentPages.join('\n');
+                                        onUpdatePromptContent(selectedChapter, sectionName, updatedContent);
+                                        
+                                        // Preserve cursor position for non-overflow cases
+                                        setTimeout(() => {
+                                          if (textarea) {
+                                            textarea.setSelectionRange(cursorPosition, cursorPosition);
+                                          }
+                                        }, 0);
+                                      }
+                                    }}
+                                    onInput={(e) => {
+                                      // Prevent scrolling within the textarea
+                                      const target = e.target as HTMLTextAreaElement;
+                                      if (target.scrollTop > 0) {
+                                        target.scrollTop = 0;
+                                      }
+                                    }}
+                                    spellCheck={false}
+                                  />
+                                </div>
+                              ))}
+                              
+                              {/* Section separator */}
+                              {sectionIndex < promptEntries.length - 1 && (
+                                <div className="my-16 flex items-center justify-center">
+                                  <div className="w-32 h-px bg-gray-300"></div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        });
+                      }
+                    })()
+                  }
+                </>
               ) : (
                 <div className="text-center py-20">
                   <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">

@@ -1,5 +1,5 @@
 import React from 'react';
-import { DocumentFile } from '../types/document';
+import { DocumentFile } from '../../types/document';
 
 interface Classification {
   filename: string;

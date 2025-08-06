@@ -6,7 +6,7 @@ import FileUploadZone from '../../components/ui/custom/FileUpload/FileUploadZone
 import FileList from '../../components/ui/custom/FileUpload/FileList';
 import DraggableCategoryView from '../../components/classification-page/DraggableCategoryView';
 import ChapterView from '../../components/classification-page/ChapterView';
-import ProcessingIndicator from '../../components/ProcessingIndicator';
+import ProcessingIndicator from '../../components/classification-page/ProcessingIndicator';
 import { classifyDocuments, regenerateDocumentClassification } from '../../lib/services/frontend/groqApi';
 import { findDuplicateFiles } from '../../utils/duplicateDetection';
 import { extractFileContent } from '../../lib/services/frontend/fileProcessing';

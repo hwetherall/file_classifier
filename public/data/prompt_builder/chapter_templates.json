@@ -1,0 +1,14 @@
+{
+  "Opportunity Validation": "[project_specific_AI_role_and_context output]\n\nYou are tasked with generating the Opportunity Validation chapter.\n\n# Chapter 1: Opportunity Validation\n\nThis chapter aims to determine whether a real and pressing problem exists and whether the corporation is well-positioned to address it. This involves assessing the urgency and validation of a customer need, and evaluating whether the company has identified a clear, focused opportunity to solve it.<replace-sections-number></replace-sections-number>\n\n<replace-name-role></replace-name-role>\n\nTo write those sections, you will follow these instructions:\n\n<replace-section_prompts></replace-section_prompts>\n\n## Required Chapter Structure\n\nBeyond the sections defined above, the chapter MUST include this exact structure:\n\n{{>required_chapter_structure_items}}\n\nThey MUST be generated AFTER the sections and placed BEFORE, right after the title in the final chapter.\n\nRemember: We're assessing whether to commit, not making a final investment decision. Focus on identifying the fastest, cheapest path to confidence.\n\n# Guidelines\n\n{{>source_evidence_requirements_with_websearch}} OR {{>source_evidence_requirements_without_websearch}}\n\n{{>baseline_guidelines}}",
+  "Product and Technology": "",
+  "Market Research": "",
+  "Competition Matrix": "",
+  "Revenue Model": "",
+  "GTM": "",
+  "Operations & Key Delivery Partners": "",
+  "Financial and Operations": "",
+  "Unit Economics": "",
+  "Team and Execution": "",
+  "Legal and IP": "",
+  "Financial Appendix": ""
+}
