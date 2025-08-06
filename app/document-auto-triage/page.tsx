@@ -2,10 +2,10 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import FileUploadZone from '../../components/FileUpload/FileUploadZone';
-import FileList from '../../components/FileUpload/FileList';
-import DraggableCategoryView from '../../components/Classification/DraggableCategoryView';
-import ChapterView from '../../components/Classification/ChapterView';
+import FileUploadZone from '../../components/ui/custom/FileUpload/FileUploadZone';
+import FileList from '../../components/ui/custom/FileUpload/FileList';
+import DraggableCategoryView from '../../components/classification-page/DraggableCategoryView';
+import ChapterView from '../../components/classification-page/ChapterView';
 import ProcessingIndicator from '../../components/ProcessingIndicator';
 import { classifyDocuments, regenerateDocumentClassification } from '../../lib/services/frontend/groqApi';
 import { findDuplicateFiles } from '../../utils/duplicateDetection';

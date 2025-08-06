@@ -1,18 +1,20 @@
 import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { DocumentFile } from '../../types/document';
-import { validateFileType, validateFileSize } from '../../utils/fileValidation';
+import { DocumentFile } from '../../../../types/document';
+import { validateFileType, validateFileSize } from '../../../../utils/fileValidation';
 
 interface FileUploadZoneProps {
   onFilesAdded: (files: DocumentFile[]) => void;
   maxFiles?: number;
   maxSizeMB?: number;
+  allowedFileTypes?: string[]; // Array of file extensions like ['pdf', 'docx', 'txt']
 }
 
 export default function FileUploadZone({ 
   onFilesAdded, 
   maxFiles = 50, 
-  maxSizeMB = 100 
+  maxSizeMB = 100,
+  allowedFileTypes
 }: FileUploadZoneProps) {
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -26,8 +28,9 @@ export default function FileUploadZone({
 
       for (const file of acceptedFiles) {
         // Validate file type
-        if (!validateFileType(file)) {
-          errors.push(`${file.name}: Unsupported file type`);
+        if (!validateFileType(file, allowedFileTypes)) {
+          const allowedTypesText = allowedFileTypes ? allowedFileTypes.join(', ').toUpperCase() : 'PDF, DOCX, XLSX, PPTX, TXT, CSV';
+          errors.push(`${file.name}: Unsupported file type. Allowed types: ${allowedTypesText}`);
           continue;
         }
 
@@ -66,19 +69,48 @@ export default function FileUploadZone({
     } finally {
       setIsProcessing(false);
     }
-  }, [onFilesAdded, maxSizeMB]);
+  }, [onFilesAdded, maxSizeMB, allowedFileTypes]);
 
-  const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
-    onDrop,
-    maxFiles,
-    accept: {
+  // Create accept object based on allowed file types
+  const getAcceptObject = () => {
+    const defaultAccept = {
       'application/pdf': ['.pdf'],
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
       'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
       'text/plain': ['.txt'],
       'text/csv': ['.csv']
+    };
+
+    if (!allowedFileTypes) {
+      return defaultAccept;
     }
+
+    const filteredAccept: Record<string, string[]> = {};
+    const mimeTypeMap: Record<string, { mime: string; ext: string }> = {
+      'pdf': { mime: 'application/pdf', ext: '.pdf' },
+      'docx': { mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', ext: '.docx' },
+      'xlsx': { mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ext: '.xlsx' },
+      'pptx': { mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', ext: '.pptx' },
+      'txt': { mime: 'text/plain', ext: '.txt' },
+      'csv': { mime: 'text/csv', ext: '.csv' }
+    };
+
+    allowedFileTypes.forEach(type => {
+      const lowerType = type.toLowerCase();
+      if (mimeTypeMap[lowerType]) {
+        const { mime, ext } = mimeTypeMap[lowerType];
+        filteredAccept[mime] = [ext];
+      }
+    });
+
+    return filteredAccept;
+  };
+
+  const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
+    onDrop,
+    maxFiles,
+    accept: getAcceptObject()
   });
 
   return (
@@ -121,7 +153,10 @@ export default function FileUploadZone({
                   Drop files here or click to browse
                 </p>
                 <p className="text-sm text-gray-500 mt-2">
-                  Supports PDF, Excel, Word, PowerPoint, and text files
+                  {allowedFileTypes 
+                    ? `Supports ${allowedFileTypes.map(t => t.toUpperCase()).join(', ')} files`
+                    : 'Supports PDF, Excel, Word, PowerPoint, and text files'
+                  }
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
                   Maximum {maxFiles} files, {maxSizeMB}MB per file

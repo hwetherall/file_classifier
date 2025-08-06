@@ -11,9 +11,9 @@
   "dependencies": {
     "groq-sdk": "^0.29.0",
     "jspdf": "^3.0.1",
-    "mammoth": "^1.9.1",
+    "mammoth": "^1.10.0",
     "next": "15.4.3",
-    "pdfjs-dist": "^5.3.93",
+    "pdfjs-dist": "^5.4.54",
     "react": "19.1.0",
     "react-dnd": "^16.0.1",
     "react-dnd-html5-backend": "^16.0.1",
@@ -24,6 +24,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@types/node": "^20",
+    "@types/pdfjs-dist": "^2.10.377",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.4.21",

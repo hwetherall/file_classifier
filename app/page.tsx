@@ -7,12 +7,12 @@ export default function Home() {
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="text-center mb-10">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">Data Room Processor</h1>
-          <p className="text-gray-600">Powerful AI-driven tools for processing and analyzing data room documents</p>
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">Zapi Toolkit</h1>
+          <p className="text-gray-600">Powerful AI-driven tools for supporting Zapi&#39;s execution</p>
         </div>
 
         <div className="max-w-4xl mx-auto">
-          <div className="grid md:grid-cols-2 gap-6 mb-8">
+          <div className="grid md:grid-cols-3 gap-6 mb-8">
             {/* Document Auto-Triage Card */}
             <Link href="/document-auto-triage" className="group">
               <div className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 p-6 border border-gray-200">
@@ -34,8 +34,8 @@ export default function Home() {
               </div>
             </Link>
 
-            {/* Document PCA Card */}
-            <Link href="/document-pca" className="group">
+            {/* Document Squeezer Card */}
+            <Link href="/document-squeezer" className="group">
               <div className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 p-6 border border-gray-200">
                 <div className="flex items-center justify-center w-12 h-12 bg-purple-100 rounded-lg mb-4 mx-auto">
                   <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -47,6 +47,27 @@ export default function Home() {
                   Extract key information of each file and produce a dense summarized version for chapter generation
                 </p>
                 <div className="flex items-center justify-center text-purple-600 font-medium hover:text-purple-800 transition-colors text-sm">
+                  Get Started
+                  <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </div>
+              </div>
+            </Link>
+
+            {/* Prompt Builder Card */}
+            <Link href="/prompt-builder" className="group">
+              <div className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 p-6 border border-gray-200">
+                <div className="flex items-center justify-center w-12 h-12 bg-green-100 rounded-lg mb-4 mx-auto">
+                  <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                </div>
+                <h2 className="text-xl font-bold text-gray-900 mb-3 text-center">Prompt Builder</h2>
+                <p className="text-gray-600 text-center mb-4 text-sm">
+                 Dynamically generate project-specific prompts for memo generation based on rubrics or project context.
+                </p>
+                <div className="flex items-center justify-center text-green-600 font-medium hover:text-green-800 transition-colors text-sm">
                   Get Started
                   <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />

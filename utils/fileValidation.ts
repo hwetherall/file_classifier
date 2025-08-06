@@ -8,8 +8,9 @@ export function formatFileSize(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-export function validateFileType(file: File): boolean {
-  const allowedTypes = [
+export function validateFileType(file: File, allowedFileTypes?: string[]): boolean {
+  // Default allowed types if none specified
+  const defaultAllowedTypes = [
     'application/pdf',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -17,8 +18,26 @@ export function validateFileType(file: File): boolean {
     'text/plain',
     'text/csv'
   ];
-  
-  return allowedTypes.includes(file.type);
+
+  if (!allowedFileTypes) {
+    return defaultAllowedTypes.includes(file.type);
+  }
+
+  // Convert file extensions to MIME types
+  const mimeTypeMap: Record<string, string> = {
+    'pdf': 'application/pdf',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'txt': 'text/plain',
+    'csv': 'text/csv'
+  };
+
+  const allowedMimeTypes = allowedFileTypes.map(ext => 
+    mimeTypeMap[ext.toLowerCase()]
+  ).filter(Boolean);
+
+  return allowedMimeTypes.includes(file.type);
 }
 
 export function validateFileSize(file: File, maxSizeMB: number = 100): boolean {

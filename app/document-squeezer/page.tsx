@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import FileUploadZone from '../../components/FileUpload/FileUploadZone';
+import FileUploadZone from '../../components/ui/custom/FileUpload/FileUploadZone';
 import { uploadFileToJuicer } from '../../lib/services/frontend/juicer.service';
 import { DocumentFile } from '../../types/document';
 import { analyzeText, contentToText, countTokens } from '../../utils/textAnalysis';
@@ -36,7 +36,7 @@ interface SummaryResponse {
   error?: string;
 }
 
-export default function DocumentPCA() {
+export default function DocumentSqueezer() {
   const [files, setFiles] = useState<DocumentFile[]>([]);
   const [filesUploaded, setFilesUploaded] = useState(false);
   const [selectedScope, setSelectedScope] = useState<string>('Memo - Overall');
@@ -580,7 +580,7 @@ export default function DocumentPCA() {
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-4xl font-bold text-gray-900 mb-2">Document PCA</h1>
+            <h1 className="text-4xl font-bold text-gray-900 mb-2">Document Squeezer</h1>
             <p className="text-gray-600">Extract key information and produce dense summarized versions</p>
           </div>
           <Link 

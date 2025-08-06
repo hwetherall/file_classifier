@@ -1,5 +1,5 @@
-import { DocumentFile } from '../../types/document';
-import { formatFileSize } from '../../utils/fileValidation';
+import { DocumentFile } from '../../../../types/document';
+import { formatFileSize } from '../../../../utils/fileValidation';
 
 interface FileListProps {
   files: DocumentFile[];
