@@ -15,19 +15,21 @@ interface FileWithChapter {
 }
 
 interface SetupStepProps {
-  projectContextInput: string;
-  setProjectContextInput: (value: string) => void;
   onPromptGeneration: (extractedDocuments: { fileName: string; chapter: string; text: string }[], webSearchEnabled: boolean, maxModeEnabled: boolean, projectContextInputValue: string) => void;
 }
 
-export default function SetupStep({ projectContextInput, setProjectContextInput, onPromptGeneration }: SetupStepProps) {
+export default function SetupStep({ onPromptGeneration }: SetupStepProps) {
   const [selectedToggle, setSelectedToggle] = useState<ToggleState>('rubrics');
   const [files, setFiles] = useState<DocumentFile[]>([]);
   const [filesWithChapters, setFilesWithChapters] = useState<FileWithChapter[]>([]);
   const [chapters, setChapters] = useState<string[]>([]);
+  const [chapterAvailability, setChapterAvailability] = useState<{ [chapter: string]: boolean }>({});
   const [isLoadingChapters, setIsLoadingChapters] = useState(true);
   const [webSearchEnabled, setWebSearchEnabled] = useState<boolean>(false);
   const [maxModeEnabled, setMaxModeEnabled] = useState<boolean>(false);
+  const [projectContextInput, setProjectContextInput] = useState<string>('');
+  const [uploadedPitchDeck, setUploadedPitchDeck] = useState<DocumentFile | null>(null);
+  const [isProcessingPitchDeck, setIsProcessingPitchDeck] = useState<boolean>(false);
 
   // Load chapters from JSON file
   useEffect(() => {
@@ -38,7 +40,16 @@ export default function SetupStep({ projectContextInput, setProjectContextInput,
           throw new Error('Failed to load chapters');
         }
         const data = await response.json();
-        setChapters(Object.keys(data));
+        // Get all chapters and track their availability
+        const allChapters = Object.keys(data.chapters);
+        const availability: { [chapter: string]: boolean } = {};
+        
+        allChapters.forEach(chapter => {
+          availability[chapter] = !!(data.chapters[chapter] && data.chapters[chapter].trim() !== '');
+        });
+        
+        setChapters(allChapters);
+        setChapterAvailability(availability);
       } catch (error) {
         console.error('Error loading chapters:', error);
       } finally {
@@ -81,10 +92,44 @@ export default function SetupStep({ projectContextInput, setProjectContextInput,
     );
   };
 
+  const handlePitchDeckUpload = async (files: File[]) => {
+    if (files.length === 0) return;
+    
+    const file = files[0];
+    const documentFile: DocumentFile = {
+      id: Date.now().toString(),
+      name: file.name,
+      size: file.size,
+      type: file.name.split('.').pop()?.toLowerCase() || '',
+      lastModified: file.lastModified,
+      file: file
+    };
+
+    setUploadedPitchDeck(documentFile);
+    setIsProcessingPitchDeck(true);
+
+    try {
+      const extractedText = await extractTextFromFile(file);
+      setProjectContextInput(extractedText);
+    } catch (error) {
+      console.error('Failed to extract text from pitch deck:', error);
+      alert(`Failed to process pitch deck: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setUploadedPitchDeck(null);
+    } finally {
+      setIsProcessingPitchDeck(false);
+    }
+  };
+
+  const handleRemovePitchDeck = () => {
+    setUploadedPitchDeck(null);
+    setProjectContextInput('');
+  };
+
   const allChaptersSelected = filesWithChapters.length > 0 && filesWithChapters.every(item => item.selectedChapter !== '');
+  const canGeneratePrompts = allChaptersSelected && projectContextInput.trim() !== '';
 
   const handleGeneratePrompts = async () => {
-    if (!allChaptersSelected) return;
+    if (!canGeneratePrompts) return;
     
     try {
       console.log('Starting prompt generation for:', filesWithChapters);
@@ -134,28 +179,28 @@ export default function SetupStep({ projectContextInput, setProjectContextInput,
             {/* Toggle Section */}
             <div className="relative">
               {/* Centered Main Toggle */}
-              <div className="flex justify-center">
-                <div className="inline-flex bg-gray-100 rounded-lg p-1">
-                  <button
-                    onClick={() => setSelectedToggle('rubrics')}
-                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                      selectedToggle === 'rubrics'
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-600 hover:text-gray-900'
-                    }`}
-                  >
-                    Rubrics
-                  </button>
-                  <button
-                    onClick={() => setSelectedToggle('context')}
-                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                      selectedToggle === 'context'
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-600 hover:text-gray-900'
-                    }`}
-                  >
-                    Context
-                  </button>
+            <div className="flex justify-center">
+              <div className="inline-flex bg-gray-100 rounded-lg p-1">
+                <button
+                  onClick={() => setSelectedToggle('rubrics')}
+                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                    selectedToggle === 'rubrics'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  Rubrics
+                </button>
+                <button
+                  onClick={() => setSelectedToggle('context')}
+                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                    selectedToggle === 'context'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  Context
+                </button>
                 </div>
               </div>
               
@@ -179,14 +224,67 @@ export default function SetupStep({ projectContextInput, setProjectContextInput,
                 {/* Project Context Input */}
                 <div className="space-y-3">
                   <div>
-                    <h3 className="text-base font-medium text-gray-900 mb-2">Project Context</h3>
-                    <textarea
-                      value={projectContextInput}
-                      onChange={(e) => setProjectContextInput(e.target.value)}
-                      placeholder="Describe the project, it's concept, value proposition, target market and opportunity"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg resize-none focus:outline-none text-sm"
-                      rows={4}
-                    />
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-base font-medium text-gray-900">Project Context</h3>
+                      {!uploadedPitchDeck && (
+                        <label className="cursor-pointer inline-flex items-center px-3 py-1.5 bg-blue-50 text-blue-700 text-xs font-medium rounded-md border border-blue-200 hover:bg-blue-100 transition-colors">
+                          <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                          </svg>
+                          Upload Pitch Deck
+                          <input
+                            type="file"
+                            accept=".pdf,.docx,.txt"
+                            onChange={(e) => handlePitchDeckUpload(Array.from(e.target.files || []))}
+                            className="hidden"
+                          />
+                        </label>
+                      )}
+                    </div>
+
+                    {uploadedPitchDeck ? (
+                      <div className="space-y-3">
+                        {/* Uploaded pitch deck display */}
+                        <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg border border-blue-200">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                              <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                            </div>
+                            <div>
+                              <p className="font-medium text-sm text-blue-900">{uploadedPitchDeck.name}</p>
+                              <p className="text-xs text-blue-600">{(uploadedPitchDeck.size / 1024 / 1024).toFixed(2)} MB • Pitch Deck</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={handleRemovePitchDeck}
+                            className="text-blue-600 hover:text-blue-800"
+                            disabled={isProcessingPitchDeck}
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+
+                        {/* Processing indicator */}
+                        {isProcessingPitchDeck && (
+                          <div className="flex items-center justify-center p-3 bg-gray-50 rounded-lg border border-gray-200">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                            <span className="text-sm text-gray-600">Processing pitch deck...</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <textarea
+                        value={projectContextInput}
+                        onChange={(e) => setProjectContextInput(e.target.value)}
+                        placeholder="Describe the project, it's concept, value proposition, target market and opportunity"
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg resize-none focus:outline-none text-sm"
+                        rows={4}
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -202,14 +300,14 @@ export default function SetupStep({ projectContextInput, setProjectContextInput,
                     {filesWithChapters.map((item) => (
                       <div key={item.file.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                         <div className="flex items-center space-x-3">
-                          <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                          <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
                             <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                             </svg>
                           </div>
                           <div>
-                            <p className="font-medium text-base text-gray-900">{item.file.name}</p>
-                            <p className="text-sm text-gray-500">{(item.file.size / 1024 / 1024).toFixed(2)} MB</p>
+                            <p className="font-medium text-sm text-gray-900">{item.file.name}</p>
+                            <p className="text-xs text-gray-500">{(item.file.size / 1024 / 1024).toFixed(2)} MB</p>
                           </div>
                         </div>
                         
@@ -227,12 +325,16 @@ export default function SetupStep({ projectContextInput, setProjectContextInput,
                               const isChapterTaken = filesWithChapters.some(
                                 otherItem => otherItem.file.id !== item.file.id && otherItem.selectedChapter === chapter
                               );
+                              // Check if this chapter is available (has content)
+                              const isChapterAvailable = chapterAvailability[chapter];
+                              const isDisabled = isChapterTaken || !isChapterAvailable;
+                              
                               return (
                                 <option 
                                   key={chapter} 
                                   value={chapter}
-                                  disabled={isChapterTaken}
-                                  className={isChapterTaken ? 'text-gray-400' : 'text-gray-900'}
+                                  disabled={isDisabled}
+                                  className={isDisabled ? 'text-gray-400' : 'text-gray-900'}
                                 >
                                   {chapter}
                                 </option>
@@ -245,7 +347,7 @@ export default function SetupStep({ projectContextInput, setProjectContextInput,
                             onClick={() => handleRemoveFile(item.file.id)}
                             className="text-red-600 hover:text-red-800"
                           >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                             </svg>
                           </button>
@@ -259,16 +361,16 @@ export default function SetupStep({ projectContextInput, setProjectContextInput,
                 {files.length > 0 && (
                   <div className="border-t border-gray-200 pt-6">
                     <h3 className="text-base font-medium text-gray-900 mb-4">Tool Configuration</h3>
-                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                       <div className="flex items-center space-x-3">
-                        <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                          <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                          <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                           </svg>
                         </div>
                         <div>
-                          <p className="font-medium text-base text-gray-900">Web Search</p>
-                          <p className="text-sm text-gray-500">Enable web search capabilities for enhanced evidence gathering</p>
+                          <p className="font-medium text-sm text-gray-900">Web Search</p>
+                          <p className="text-xs text-gray-500">Enable web search capabilities for enhanced evidence gathering</p>
                         </div>
                       </div>
                       <Switch 
@@ -285,9 +387,9 @@ export default function SetupStep({ projectContextInput, setProjectContextInput,
                   <div className="flex justify-center pt-4">
                     <button
                       onClick={handleGeneratePrompts}
-                      disabled={!allChaptersSelected}
+                      disabled={!canGeneratePrompts}
                       className={`px-6 py-3 rounded-lg font-medium transition-colors ${
-                        allChaptersSelected
+                        canGeneratePrompts
                           ? 'bg-green-600 text-white hover:bg-green-700'
                           : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                       }`}

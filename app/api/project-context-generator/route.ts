@@ -31,12 +31,6 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
-    
-    // 3. Call OpenRouter API
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) {
-      throw new Error('OpenRouter API key is not configured');
-    }
 
     const prompt = `
 You are a tasked with generating a project context paragraph based on the provided project information. Refer to INSTRUCTIONS for the instructions and CONTEXT for the provided project context

@@ -16,14 +16,12 @@ export default function PromptBuilder() {
   const [extractedDocuments, setExtractedDocuments] = useState<ExtractedDocument[]>([]);
   const [webSearchEnabled, setWebSearchEnabled] = useState<boolean>(false);
   const [showResults, setShowResults] = useState(false);
-  const [projectContextInput, setProjectContextInput] = useState<string>('');
   const { chapterPromptStates, generatePrompts } = usePromptGeneration();
   const { projectContextState, generateContext } = useProjectContext();
 
   const handlePromptGeneration = async (documents: ExtractedDocument[], webSearch: boolean, maxMode: boolean, projectContextInputValue: string) => {
     setExtractedDocuments(documents);
     setWebSearchEnabled(webSearch);
-    setProjectContextInput(projectContextInputValue);
     
     // Trigger project context generation if input is provided (don't wait)
     generateContext(projectContextInputValue.trim());
@@ -37,7 +35,6 @@ export default function PromptBuilder() {
     setShowResults(false);
     setExtractedDocuments([]);
     setWebSearchEnabled(false);
-    setProjectContextInput('');
   };
 
   if (showResults) {
@@ -54,8 +51,6 @@ export default function PromptBuilder() {
 
   return (
     <SetupStep 
-      projectContextInput={projectContextInput}
-      setProjectContextInput={setProjectContextInput}
       onPromptGeneration={handlePromptGeneration}
     />
   );

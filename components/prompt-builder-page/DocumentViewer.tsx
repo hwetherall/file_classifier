@@ -31,7 +31,8 @@ interface DocumentViewerProps {
 
 export default function DocumentViewer({ extractedDocuments, chapterPromptStates, webSearchEnabled, projectContextState, onBackToUpload }: DocumentViewerProps) {
   const [selectedChapter, setSelectedChapter] = useState<string>('');
-  const [chapterTemplates, setChapterTemplates] = useState<{ [chapter: string]: string }>({});
+  const [masterTemplate, setMasterTemplate] = useState<string>('');
+  const [chapterPrompts, setChapterPrompts] = useState<{ [chapter: string]: string }>({});
   const [filledTemplates, setFilledTemplates] = useState<{ [chapter: string]: string }>({});
   const [snippetPopup, setSnippetPopup] = useState<{ isOpen: boolean; snippetName: string }>({
     isOpen: false,
@@ -44,22 +45,23 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
     [extractedDocuments]
   );
 
-  // Load chapter templates
+  // Load master template and chapter prompts
   useEffect(() => {
-    const loadChapterTemplates = async () => {
+    const loadTemplateData = async () => {
       try {
         const response = await fetch('/data/prompt_builder/chapter_templates.json');
         if (!response.ok) {
           throw new Error('Failed to load chapter templates');
         }
         const data = await response.json();
-        setChapterTemplates(data);
+        setMasterTemplate(data['chapter-general'] || '');
+        setChapterPrompts(data.chapters || {});
       } catch (error) {
-        console.error('Error loading chapter templates:', error);
+        console.error('Error loading template data:', error);
       }
     };
 
-    loadChapterTemplates();
+    loadTemplateData();
   }, []);
 
   // Calculate visual lines for a single paragraph (reusable function)
@@ -190,17 +192,18 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
 
   // Fill templates when prompts are generated or project context changes
   useEffect(() => {
-    // Only process chapters that have templates defined in chapter_templates.json
-    Object.entries(chapterTemplates).forEach(([chapter, template]) => {
-      // Skip empty templates
-      if (!template || template.trim() === '') {
-        return;
-      }
-      
+    // Only process if master template is loaded
+    if (!masterTemplate || masterTemplate.trim() === '') {
+      return;
+    }
+
+    // Process each chapter that has prompts ready
+    Object.keys(chapterPromptStates).forEach((chapter) => {
       const state = chapterPromptStates[chapter];
+      const chapterSpecificPrompt = chapterPrompts[chapter];
       
-      // Only process if chapter has prompts ready
-      if (!state || !state.prompts || state.loading || state.error) {
+      // Only process if chapter has prompts ready and chapter-specific prompt exists
+      if (!state || !state.prompts || state.loading || state.error || !chapterSpecificPrompt) {
         return;
       }
         
@@ -212,15 +215,27 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
         
         // Only fill if template doesn't exist or needs project context update
         if (!currentTemplate || needsProjectContextUpdate) {
-          // Fill the template
-          let filledTemplate = template;
+          // Fill the master template
+          let filledTemplate = masterTemplate;
         
+          // Replace chapter-specific content
+          filledTemplate = filledTemplate.replace(/<replace-chapter-specific><\/replace-chapter-specific>/g, `<span style="color: #1e3a8a;">${chapterSpecificPrompt}</span>`);
+
+          // Replace chapter number and chapter list
+          const allSelectedChapters = Object.keys(chapterPromptStates);
+          const chapterCount = allSelectedChapters.length;
+          const chapterListText = allSelectedChapters.join(', ');
+          
+          filledTemplate = filledTemplate.replace(/<replace-chapter-number><\/replace-chapter-number>/g, chapterCount.toString());
+          
+          filledTemplate = filledTemplate.replace(/<replace-chapter-list><\/replace-chapter-list>/g, chapterListText);
+
           // Replace sections number (with type guard)
           if (!state.prompts) return prev;
           const sectionsCount = Object.keys(state.prompts).length;
           const sectionsNumberText = sectionsCount === 1 
-            ? "\n\nYour analysis will focus on one critical aspect, defined as a section:"
-            : `\n\nYour analysis will be divided into ${sectionsCount} critical aspects, defined as sections:`;
+            ? "Your analysis will focus on one critical aspect, defined as a section:"
+            : `Your analysis will be divided into ${sectionsCount} critical aspects, defined as sections:`;
           filledTemplate = filledTemplate.replace(/<replace-sections-number><\/replace-sections-number>/g, `<span style="color: #1e3a8a;">${sectionsNumberText}</span>`);
           
           // Replace name-role
@@ -268,7 +283,7 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
         return prev; // No changes needed
       });
     });
-  }, [chapterPromptStates, chapterTemplates, projectContextState.context]);
+  }, [chapterPromptStates, masterTemplate, chapterPrompts, projectContextState.context]);
 
   // Function to filter out snippets based on web search configuration
   const filterSnippets = useCallback((text: string): string => {
@@ -476,15 +491,13 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
                     </div>
                   )}
                   
-                  {/* Display chapter template or fallback to sections */}
+                  {/* Display filled template */}
                   {chapterPromptStates[selectedChapter]?.prompts && !chapterPromptStates[selectedChapter]?.loading && 
                     (() => {
-                      const prompts = chapterPromptStates[selectedChapter].prompts!;
-                      const template = chapterTemplates[selectedChapter];
                       const filledTemplate = filledTemplates[selectedChapter];
                       
-                      // If template exists and is not empty, display the filled version
-                      if (template && template.trim() !== '' && filledTemplate) {
+                      // Display the filled master template
+                      if (filledTemplate) {
                         const pages = splitIntoPages(filledTemplate);
                         return pages.map((pageContent, pageIndex) => (
                           <div 
@@ -513,58 +526,9 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
                             />
                           </div>
                         ));
-                      } else {
-                        // Fallback: display individual sections as before
-                        const promptEntries = Object.entries(prompts);
-                      
-                      return promptEntries.map(([sectionName, promptContent], sectionIndex) => {
-                        const pages = splitIntoPages(promptContent);
-                  return (
-                          <div key={`${sectionName}-${sectionIndex}`}>
-                            {/* Section Header */}
-                            <div className="mb-4">
-                              <h2 className="text-xl font-semibold text-gray-800 mb-2">{sectionName}</h2>
-                            </div>
-                            
-                      {/* Pages for this section */}
-                      {pages.map((pageContent, pageIndex) => (
-                        <div 
-                            key={`${sectionName}-page-${pageIndex}`} 
-                            className="bg-white shadow-sm border border-gray-200 mx-auto mb-6 py-[80px] px-[80px]"
-                            style={{ 
-                              width: '8.5in', 
-                              height: '11in',
-                              overflow: 'hidden',
-                            }}
-                          >
-                            <div
-                              className="text-sm leading-normal text-gray-900 w-full h-full overflow-hidden"
-                              style={{
-                                fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                                fontSize: '11pt',
-                                lineHeight: '1.5',
-                                whiteSpace: 'pre-wrap',
-                                wordWrap: 'break-word',
-                                padding: '0',
-                                margin: '0',
-                              }}
-                              dangerouslySetInnerHTML={{
-                                __html: prepareHtmlWithSnippets(pageContent)
-                              }}
-                            />
-                        </div>
-                      ))}
-                      
-                        {/* Section separator */}
-                        {sectionIndex < promptEntries.length - 1 && (
-                        <div className="my-16 flex items-center justify-center">
-                          <div className="w-32 h-px bg-gray-300"></div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                      });
                       }
+                      
+                      return null;
                     })()
                   }
                 </>
