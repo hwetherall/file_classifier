@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import SnippetPopup from './SnippetPopup';
 
 interface ExtractedDocument {
   fileName: string;
@@ -14,17 +15,28 @@ interface ChapterPromptState {
   prompts?: { [key: string]: string };
 }
 
+interface ProjectContextState {
+  loading: boolean;
+  error?: string;
+  context?: string;
+}
+
 interface DocumentViewerProps {
   extractedDocuments: ExtractedDocument[];
   chapterPromptStates: { [chapter: string]: ChapterPromptState };
+  webSearchEnabled: boolean;
+  projectContextState: ProjectContextState;
   onBackToUpload: () => void;
-  onUpdatePromptContent: (chapter: string, sectionName: string, content: string) => void;
 }
 
-export default function DocumentViewer({ extractedDocuments, chapterPromptStates, onBackToUpload, onUpdatePromptContent }: DocumentViewerProps) {
+export default function DocumentViewer({ extractedDocuments, chapterPromptStates, webSearchEnabled, projectContextState, onBackToUpload }: DocumentViewerProps) {
   const [selectedChapter, setSelectedChapter] = useState<string>('');
   const [chapterTemplates, setChapterTemplates] = useState<{ [chapter: string]: string }>({});
   const [filledTemplates, setFilledTemplates] = useState<{ [chapter: string]: string }>({});
+  const [snippetPopup, setSnippetPopup] = useState<{ isOpen: boolean; snippetName: string }>({
+    isOpen: false,
+    snippetName: ''
+  });
 
   // Get unique chapters from extracted documents
   const availableChapters = useMemo(() => 
@@ -51,21 +63,23 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
   }, []);
 
   // Calculate visual lines for a single paragraph (reusable function)
+  // Strip HTML tags before measuring text width to avoid counting tags
   const calculateParagraphLines = useCallback((paragraph: string): number => {
-    if (paragraph === '') return 1;
+    const textOnly = paragraph.replace(/<[^>]*>/g, '');
+    if (textOnly === '') return 1;
     
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d')!;
     context.font = '11pt system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
     const maxWidth = 654;
     
-    const lineWidth = context.measureText(paragraph).width;
+    const lineWidth = context.measureText(textOnly).width;
     if (lineWidth <= maxWidth) {
       return 1; // Line fits in one visual line
     }
     
     // Line needs to be wrapped - calculate how many visual lines it needs
-    const words = paragraph.split(' ');
+    const words = textOnly.split(' ');
     let currentLineWidth = 0;
     let wrappedLines = 1;
     
@@ -82,15 +96,41 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
     return wrappedLines;
   }, []);
 
-  // Calculate total actual line count including word wrapping
-  const calculateActualLines = useCallback((text: string): number => {
-    if (!text) return 1;
-    
-    const paragraphs = text.split('\n');
-    return paragraphs.reduce((total, paragraph) => total + calculateParagraphLines(paragraph), 0);
-  }, [calculateParagraphLines]);
 
-  // Split text into pages based on actual visual lines
+
+  // Helper to find open tags at the end of an HTML segment
+  const findOpenTags = useCallback((htmlSegment: string): { name: string; openTag: string }[] => {
+    const stack: { name: string; openTag: string }[] = [];
+    // Updated regex to handle more HTML tag patterns including attributes with quotes
+    const tagRegex = /<\/?([a-zA-Z0-9]+)(?:\s[^>]*)?>/g;
+
+    let match: RegExpExecArray | null;
+    while ((match = tagRegex.exec(htmlSegment)) !== null) {
+      const full = match[0];
+      const name = match[1].toLowerCase();
+      const isClosing = full.startsWith('</');
+      const isSelfClosing = full.endsWith('/>') || ['br', 'hr', 'img', 'input', 'meta', 'link'].includes(name);
+
+      if (isSelfClosing) continue;
+      
+      if (!isClosing) {
+        // opening tag - keep full for attributes
+        stack.push({ name, openTag: full });
+      } else {
+        // closing tag - pop the most recent matching opening tag (LIFO for proper nesting)
+        for (let i = stack.length - 1; i >= 0; i--) {
+          if (stack[i].name === name) {
+            stack.splice(i, 1);
+            break;
+          }
+        }
+      }
+    }
+
+    return stack;
+  }, []);
+
+  // Split text into pages based on actual visual lines, while ensuring HTML tag continuity across page breaks
   // Content area: 654px x 894px
   // Font: 11pt = 14.67px, Line height: 1.5 = 22px  
   // Lines per page: 894px / 22px = 40.6 ≈ 40 lines
@@ -101,47 +141,87 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
     const pages: string[] = [];
     let currentPageContent: string[] = []; // Store paragraphs for current page
     let currentPageLines = 0;
+    let carryOpenTagsPrefix = ''; // Opening tags to prepend on next page
     
     for (const paragraph of paragraphs) {
-      // Use the reusable function to calculate lines for this paragraph
+      // Calculate lines for this paragraph (without carry tags for line calculation)
       const paragraphLines = calculateParagraphLines(paragraph);
       
       if (currentPageLines + paragraphLines > linesPerPage && currentPageContent.length > 0) {
-        // Start new page
-        pages.push(currentPageContent.join('\n'));
-        currentPageContent = [paragraph];
+        // Build current page content string and find open tags
+        const pageStr = currentPageContent.join('\n');
+        const openTags = findOpenTags(pageStr);
+        const closingSuffix = openTags.slice().reverse().map(t => `</${t.name}>`).join('');
+        const balancedPage = pageStr + closingSuffix;
+        pages.push(balancedPage);
+
+        // Prepare next page prefix with reopened tags
+        carryOpenTagsPrefix = openTags.map(t => t.openTag).join('');
+        
+        // Start new page with carry tags and current paragraph
+        if (carryOpenTagsPrefix) {
+          currentPageContent = [carryOpenTagsPrefix + paragraph];
+        } else {
+          currentPageContent = [paragraph];
+        }
         currentPageLines = paragraphLines;
       } else {
-        // Add to current page
-        currentPageContent.push(paragraph);
+        // Add to current page - apply carry tags only to first paragraph of page
+        if (currentPageContent.length === 0 && carryOpenTagsPrefix) {
+          currentPageContent.push(carryOpenTagsPrefix + paragraph);
+          carryOpenTagsPrefix = ''; // Clear after using
+        } else {
+          currentPageContent.push(paragraph);
+        }
         currentPageLines += paragraphLines;
       }
     }
     
     // Add the last page
     if (currentPageContent.length > 0) {
-      pages.push(currentPageContent.join('\n'));
+      const lastStr = currentPageContent.join('\n');
+      const openTags = findOpenTags(lastStr);
+      const closingSuffix = openTags.slice().reverse().map(t => `</${t.name}>`).join('');
+      pages.push(lastStr + closingSuffix);
     }
     
     return pages.length > 0 ? pages : [''];
-  }, [calculateParagraphLines]);
+  }, [calculateParagraphLines, findOpenTags]);
 
-  // Fill templates when prompts are generated
+  // Fill templates when prompts are generated or project context changes
   useEffect(() => {
-    Object.entries(chapterPromptStates).forEach(([chapter, state]) => {
-      if (state.prompts && !state.loading && !state.error && !filledTemplates[chapter]) {
-        const template = chapterTemplates[chapter];
+    // Only process chapters that have templates defined in chapter_templates.json
+    Object.entries(chapterTemplates).forEach(([chapter, template]) => {
+      // Skip empty templates
+      if (!template || template.trim() === '') {
+        return;
+      }
+      
+      const state = chapterPromptStates[chapter];
+      
+      // Only process if chapter has prompts ready
+      if (!state || !state.prompts || state.loading || state.error) {
+        return;
+      }
         
-        if (template && template.trim() !== '') {
-          // Fill the template once and save it
+      // Check if we need to fill/refill this template
+      setFilledTemplates(prev => {
+        const currentTemplate = prev[chapter];
+        const hasProjectContext = projectContextState.context;
+        const needsProjectContextUpdate = hasProjectContext && (!currentTemplate || !currentTemplate.includes(projectContextState.context || ''));
+        
+        // Only fill if template doesn't exist or needs project context update
+        if (!currentTemplate || needsProjectContextUpdate) {
+          // Fill the template
           let filledTemplate = template;
-          
-          // Replace sections number
+        
+          // Replace sections number (with type guard)
+          if (!state.prompts) return prev;
           const sectionsCount = Object.keys(state.prompts).length;
           const sectionsNumberText = sectionsCount === 1 
             ? "\n\nYour analysis will focus on one critical aspect, defined as a section:"
             : `\n\nYour analysis will be divided into ${sectionsCount} critical aspects, defined as sections:`;
-          filledTemplate = filledTemplate.replace(/<replace-sections-number><\/replace-sections-number>/g, sectionsNumberText);
+          filledTemplate = filledTemplate.replace(/<replace-sections-number><\/replace-sections-number>/g, `<span style="color: #1e3a8a;">${sectionsNumberText}</span>`);
           
           // Replace name-role
           const nameRoleEntries = Object.entries(state.prompts).map(([, promptContent]) => {
@@ -169,21 +249,78 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
           });
           
           const nameRoleText = nameRoleEntries.join('\n');
-          filledTemplate = filledTemplate.replace(/<replace-name-role><\/replace-name-role>/g, nameRoleText);
+          filledTemplate = filledTemplate.replace(/<replace-name-role><\/replace-name-role>/g, `<span style="color: #1e3a8a;">${nameRoleText}</span>`);
           
           // Replace section prompts
           const sectionPromptsText = Object.values(state.prompts).join('\n\n');
-          filledTemplate = filledTemplate.replace(/<replace-section_prompts><\/replace-section_prompts>/g, sectionPromptsText);
+          filledTemplate = filledTemplate.replace(/<replace-section_prompts><\/replace-section_prompts>/g, `<span style="color: #1e3a8a;">${sectionPromptsText}</span>`);
           
-          // Save the filled template
-          setFilledTemplates(prev => ({
+          // Replace project context
+          const projectContextText = projectContextState.context || '';
+          filledTemplate = filledTemplate.replace(/<replace-project-context><\/replace-project-context>/g, `<span style="color: #1e3a8a;">${projectContextText}</span>`);
+          
+          return {
             ...prev,
             [chapter]: filledTemplate
-          }));
+          };
         }
-      }
+        
+        return prev; // No changes needed
+      });
     });
-  }, [chapterPromptStates, chapterTemplates, filledTemplates]);
+  }, [chapterPromptStates, chapterTemplates, projectContextState.context]);
+
+  // Function to filter out snippets based on web search configuration
+  const filterSnippets = useCallback((text: string): string => {
+    if (webSearchEnabled) {
+      // Remove {{>source_evidence_requirements_without_websearch}} if web search is enabled
+      return text.replace(/\{\{>source_evidence_requirements_without_websearch\}\}/g, '');
+    } else {
+      // Remove {{>source_evidence_requirements_with_websearch}} if web search is disabled
+      return text.replace(/\{\{>source_evidence_requirements_with_websearch\}\}/g, '');
+    }
+  }, [webSearchEnabled]);
+
+  // Function to prepare HTML with clickable snippets
+  const prepareHtmlWithSnippets = useCallback((text: string) => {
+    // First filter the text based on web search configuration
+    const filteredText = filterSnippets(text);
+    
+    // Convert newlines to HTML line breaks for proper rendering
+    const textWithBreaks = filteredText.replace(/\n/g, '<br/>');
+    
+    // Replace snippet placeholders with clickable HTML elements
+    const htmlWithSnippets = textWithBreaks.replace(
+      /\{\{>([^}]+)\}\}/g,
+      (match, snippetName) => {
+        const snippetId = `snippet-${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Store snippet handler for later attachment
+        setTimeout(() => {
+          const element = document.getElementById(snippetId);
+          if (element) {
+            element.onclick = () => {
+              setSnippetPopup({
+                isOpen: true,
+                snippetName
+              });
+            };
+          }
+        }, 0);
+        
+        return `<span id="${snippetId}" class="inline-block bg-blue-50 text-blue-800 px-1.5 py-0.5 rounded cursor-pointer hover:bg-blue-100 transition-colors border border-blue-100">${match}</span>`;
+      }
+    );
+
+    console.log(htmlWithSnippets);
+    
+    return htmlWithSnippets;
+  }, [filterSnippets]);
+
+  // Function to close snippet popup
+  const closeSnippetPopup = useCallback(() => {
+    setSnippetPopup(prev => ({ ...prev, isOpen: false }));
+  }, []);
 
   // Set initial chapter selection
   useEffect(() => {
@@ -289,7 +426,7 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
             <div className="max-w-[8.5in] mx-auto">
               {selectedChapter ? (
                 <>
-                  {/* Loading state - same as before but at top */}
+                  {/* Loading state */}
                   {chapterPromptStates[selectedChapter]?.loading && (
                     <div className="bg-white shadow-sm border border-gray-200 mx-auto mb-6 py-[80px] px-[80px]"
                          style={{ width: '8.5in', height: '11in' }}>
@@ -311,13 +448,13 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
                             />
                           </svg>
                           <h3 className="text-lg font-medium text-gray-800 mb-2">Generating Prompts</h3>
-                          <p className="text-gray-600">Creating dynamic prompts for {selectedChapter}...</p>
+                          <p className="text-gray-600">Creating dynamic prompts for {selectedChapter} chapter...</p>
                         </div>
                       </div>
                     </div>
                   )}
                   
-                  {/* Error state - same as before but at top */}
+                  {/* Error state */}
                   {chapterPromptStates[selectedChapter]?.error && (
                     <div className="bg-white shadow-sm border border-red-200 mx-auto mb-6 py-[80px] px-[80px]"
                          style={{ width: '8.5in', height: '11in' }}>
@@ -359,210 +496,74 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
                               overflow: 'hidden',
                             }}
                           >
-                            <textarea
-                              data-page-index={pageIndex}
-                              className="text-sm leading-normal text-gray-900 w-full h-full resize-none border-none outline-none bg-transparent [&::-webkit-scrollbar]:hidden"
+                            <div
+                              className="text-sm leading-normal text-gray-900 w-full h-full overflow-hidden"
                               style={{
                                 fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
                                 fontSize: '11pt',
                                 lineHeight: '1.5',
                                 whiteSpace: 'pre-wrap',
                                 wordWrap: 'break-word',
-                                overflow: 'hidden',
                                 padding: '0',
                                 margin: '0',
                               }}
-                              value={pageContent}
-                              onChange={(e) => {
-                                // Handle content change with automatic page breaks
-                                const textarea = e.target as HTMLTextAreaElement;
-                                const cursorPosition = textarea.selectionStart;
-                                const newValue = textarea.value;
-                                const currentPages = [...pages];
-                                currentPages[pageIndex] = newValue;
-                                
-                                // Calculate absolute cursor position in the full content
-                                let absoluteCursorPosition = cursorPosition;
-                                for (let i = 0; i < pageIndex; i++) {
-                                  absoluteCursorPosition += currentPages[i].length + 1; // +1 for the page separator
-                                }
-                                
-                                // Check if content overflows current page using actual line counting
-                                const actualLines = calculateActualLines(newValue);
-                                const linesPerPage = 40;
-                                
-                                if (actualLines > linesPerPage) {
-                                  // Content overflows - redistribute across pages
-                                  const allContent = currentPages.join('\n');
-                                  const redistributedPages = splitIntoPages(allContent);
-                                  // Update the filled template with redistributed content
-                                  const updatedTemplate = redistributedPages.join('\n');
-                                  setFilledTemplates(prev => ({
-                                    ...prev,
-                                    [selectedChapter]: updatedTemplate
-                                  }));
-                                  
-                                  // After redistribution, find which page and position the cursor should be on
-                                  setTimeout(() => {
-                                    let charCount = 0;
-                                    let targetPageIndex = 0;
-                                    let targetCursorPosition = 0;
-                                    
-                                    for (let i = 0; i < redistributedPages.length; i++) {
-                                      const pageLength = redistributedPages[i].length;
-                                      
-                                      // Check if the cursor position falls within this page
-                                      if (absoluteCursorPosition <= charCount + pageLength) {
-                                        targetPageIndex = i;
-                                        targetCursorPosition = absoluteCursorPosition - charCount;
-                                        break;
-                                      }
-                                      
-                                      // Add page length + 1 for the separator (except for the last page)
-                                      charCount += pageLength;
-                                      if (i < redistributedPages.length - 1) {
-                                        charCount += 1; // +1 for page separator
-                                      }
-                                    }
-                                    
-                                    // Ensure cursor position is within bounds of the target page
-                                    if (targetPageIndex < redistributedPages.length) {
-                                      targetCursorPosition = Math.min(targetCursorPosition, redistributedPages[targetPageIndex].length);
-                                      targetCursorPosition = Math.max(0, targetCursorPosition);
-                                      
-                                      // Find the textarea for the target page
-                                      const targetTextarea = document.querySelector(`[data-page-index="${targetPageIndex}"]`) as HTMLTextAreaElement;
-                                      if (targetTextarea) {
-                                        // Store current scroll position to restore it after focus
-                                        const scrollContainer = targetTextarea.closest('.overflow-y-auto');
-                                        const currentScrollTop = scrollContainer?.scrollTop || 0;
-                                        
-                                        targetTextarea.focus({ preventScroll: true });
-                                        targetTextarea.setSelectionRange(targetCursorPosition, targetCursorPosition);
-                                        
-                                        // Restore scroll position
-                                        if (scrollContainer) {
-                                          scrollContainer.scrollTop = currentScrollTop;
-                                        }
-                                      }
-                                    }
-                                  }, 0);
-                                } else {
-                                  // Normal update within page limits
-                                  const updatedContent = currentPages.join('\n');
-                                  setFilledTemplates(prev => ({
-                                    ...prev,
-                                    [selectedChapter]: updatedContent
-                                  }));
-                                  
-                                  // Preserve cursor position for non-overflow cases
-                                  setTimeout(() => {
-                                    if (textarea) {
-                                      textarea.setSelectionRange(cursorPosition, cursorPosition);
-                                    }
-                                  }, 0);
-                                }
+                              dangerouslySetInnerHTML={{
+                                __html: prepareHtmlWithSnippets(pageContent)
                               }}
-                              onInput={(e) => {
-                                // Prevent scrolling within the textarea
-                                const target = e.target as HTMLTextAreaElement;
-                                if (target.scrollTop > 0) {
-                                  target.scrollTop = 0;
-                                }
-                              }}
-                              spellCheck={false}
                             />
                           </div>
                         ));
                       } else {
                         // Fallback: display individual sections as before
                         const promptEntries = Object.entries(prompts);
-                        
-                        return promptEntries.map(([sectionName, promptContent], sectionIndex) => {
-                          const pages = splitIntoPages(promptContent);
-                          return (
-                            <div key={`${sectionName}-${sectionIndex}`}>
-                              {/* Section Header */}
-                              <div className="mb-4">
-                                <h2 className="text-xl font-semibold text-gray-800 mb-2">{sectionName}</h2>
-                              </div>
-                              
-                              {/* Pages for this section */}
-                              {pages.map((pageContent, pageIndex) => (
-                                <div 
-                                  key={`${sectionName}-page-${pageIndex}`} 
-                                  className="bg-white shadow-sm border border-gray-200 mx-auto mb-6 py-[80px] px-[80px]"
-                                  style={{ 
-                                    width: '8.5in', 
-                                    height: '11in',
-                                    overflow: 'hidden',
-                                  }}
-                                >
-                                  <textarea
-                                    data-page-index={pageIndex}
-                                    className="text-sm leading-normal text-gray-900 w-full h-full resize-none border-none outline-none bg-transparent [&::-webkit-scrollbar]:hidden"
-                                    style={{
-                                      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                                      fontSize: '11pt',
-                                      lineHeight: '1.5',
-                                      whiteSpace: 'pre-wrap',
-                                      wordWrap: 'break-word',
-                                      overflow: 'hidden',
-                                      padding: '0',
-                                      margin: '0',
-                                    }}
-                                    value={pageContent}
-                                    onChange={(e) => {
-                                      // Handle content change with automatic page breaks
-                                      const textarea = e.target as HTMLTextAreaElement;
-                                      const cursorPosition = textarea.selectionStart;
-                                      const newValue = textarea.value;
-                                      const currentPages = [...pages];
-                                      currentPages[pageIndex] = newValue;
-                                      
-                                      // Check if content overflows current page using actual line counting
-                                      const actualLines = calculateActualLines(newValue);
-                                      const linesPerPage = 40;
-                                      
-                                      if (actualLines > linesPerPage) {
-                                        // Content overflows - redistribute across pages
-                                        const allContent = currentPages.join('\n');
-                                        const redistributedPages = splitIntoPages(allContent);
-                                        onUpdatePromptContent(selectedChapter, sectionName, redistributedPages.join('\n'));
-                                      } else {
-                                        // Normal update within page limits
-                                        const updatedContent = currentPages.join('\n');
-                                        onUpdatePromptContent(selectedChapter, sectionName, updatedContent);
-                                        
-                                        // Preserve cursor position for non-overflow cases
-                                        setTimeout(() => {
-                                          if (textarea) {
-                                            textarea.setSelectionRange(cursorPosition, cursorPosition);
-                                          }
-                                        }, 0);
-                                      }
-                                    }}
-                                    onInput={(e) => {
-                                      // Prevent scrolling within the textarea
-                                      const target = e.target as HTMLTextAreaElement;
-                                      if (target.scrollTop > 0) {
-                                        target.scrollTop = 0;
-                                      }
-                                    }}
-                                    spellCheck={false}
-                                  />
-                                </div>
-                              ))}
-                              
-                              {/* Section separator */}
-                              {sectionIndex < promptEntries.length - 1 && (
-                                <div className="my-16 flex items-center justify-center">
-                                  <div className="w-32 h-px bg-gray-300"></div>
-                                </div>
-                              )}
+                      
+                      return promptEntries.map(([sectionName, promptContent], sectionIndex) => {
+                        const pages = splitIntoPages(promptContent);
+                  return (
+                          <div key={`${sectionName}-${sectionIndex}`}>
+                            {/* Section Header */}
+                            <div className="mb-4">
+                              <h2 className="text-xl font-semibold text-gray-800 mb-2">{sectionName}</h2>
                             </div>
-                          );
-                        });
+                            
+                      {/* Pages for this section */}
+                      {pages.map((pageContent, pageIndex) => (
+                        <div 
+                            key={`${sectionName}-page-${pageIndex}`} 
+                            className="bg-white shadow-sm border border-gray-200 mx-auto mb-6 py-[80px] px-[80px]"
+                            style={{ 
+                              width: '8.5in', 
+                              height: '11in',
+                              overflow: 'hidden',
+                            }}
+                          >
+                            <div
+                              className="text-sm leading-normal text-gray-900 w-full h-full overflow-hidden"
+                              style={{
+                                fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                                fontSize: '11pt',
+                                lineHeight: '1.5',
+                                whiteSpace: 'pre-wrap',
+                                wordWrap: 'break-word',
+                                padding: '0',
+                                margin: '0',
+                              }}
+                              dangerouslySetInnerHTML={{
+                                __html: prepareHtmlWithSnippets(pageContent)
+                              }}
+                            />
+                        </div>
+                      ))}
+                      
+                        {/* Section separator */}
+                        {sectionIndex < promptEntries.length - 1 && (
+                        <div className="my-16 flex items-center justify-center">
+                          <div className="w-32 h-px bg-gray-300"></div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                      });
                       }
                     })()
                   }
@@ -582,6 +583,13 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
           </div>
         </div>
       </div>
+      
+      {/* Snippet Popup */}
+      <SnippetPopup
+        isOpen={snippetPopup.isOpen}
+        snippetName={snippetPopup.snippetName}
+        onClose={closeSnippetPopup}
+      />
     </div>
   );
 }

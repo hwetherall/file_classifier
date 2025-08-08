@@ -5,6 +5,7 @@ import Link from 'next/link';
 import FileUploadZone from '../ui/custom/FileUpload/FileUploadZone';
 import { DocumentFile } from '../../types/document';
 import { extractTextFromFile } from '../../lib/services/frontend/extractors';
+import { Switch } from '@/components/ui/shadcn/switch';
 
 type ToggleState = 'rubrics' | 'context';
 
@@ -14,15 +15,19 @@ interface FileWithChapter {
 }
 
 interface SetupStepProps {
-  onPromptGeneration: (extractedDocuments: { fileName: string; chapter: string; text: string }[]) => void;
+  projectContextInput: string;
+  setProjectContextInput: (value: string) => void;
+  onPromptGeneration: (extractedDocuments: { fileName: string; chapter: string; text: string }[], webSearchEnabled: boolean, maxModeEnabled: boolean, projectContextInputValue: string) => void;
 }
 
-export default function SetupStep({ onPromptGeneration }: SetupStepProps) {
+export default function SetupStep({ projectContextInput, setProjectContextInput, onPromptGeneration }: SetupStepProps) {
   const [selectedToggle, setSelectedToggle] = useState<ToggleState>('rubrics');
   const [files, setFiles] = useState<DocumentFile[]>([]);
   const [filesWithChapters, setFilesWithChapters] = useState<FileWithChapter[]>([]);
   const [chapters, setChapters] = useState<string[]>([]);
   const [isLoadingChapters, setIsLoadingChapters] = useState(true);
+  const [webSearchEnabled, setWebSearchEnabled] = useState<boolean>(false);
+  const [maxModeEnabled, setMaxModeEnabled] = useState<boolean>(false);
 
   // Load chapters from JSON file
   useEffect(() => {
@@ -104,8 +109,8 @@ export default function SetupStep({ onPromptGeneration }: SetupStepProps) {
         }
       }
       
-      // Call the parent callback with extracted documents
-      onPromptGeneration(extractedTexts);
+      // Call the parent callback with extracted documents, settings, and project context input
+      onPromptGeneration(extractedTexts, webSearchEnabled, maxModeEnabled, projectContextInput);
       
       console.log('Extracted texts:', extractedTexts);
       
@@ -127,34 +132,64 @@ export default function SetupStep({ onPromptGeneration }: SetupStepProps) {
         <div className="max-w-4xl mx-auto">
           <div className="bg-white rounded-lg shadow-sm p-6 space-y-6">
             {/* Toggle Section */}
-            <div className="flex justify-center">
-              <div className="inline-flex bg-gray-100 rounded-lg p-1">
-                <button
-                  onClick={() => setSelectedToggle('rubrics')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                    selectedToggle === 'rubrics'
-                      ? 'bg-white text-gray-900 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  Rubrics
-                </button>
-                <button
-                  onClick={() => setSelectedToggle('context')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                    selectedToggle === 'context'
-                      ? 'bg-white text-gray-900 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  Context
-                </button>
+            <div className="relative">
+              {/* Centered Main Toggle */}
+              <div className="flex justify-center">
+                <div className="inline-flex bg-gray-100 rounded-lg p-1">
+                  <button
+                    onClick={() => setSelectedToggle('rubrics')}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                      selectedToggle === 'rubrics'
+                        ? 'bg-white text-gray-900 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    Rubrics
+                  </button>
+                  <button
+                    onClick={() => setSelectedToggle('context')}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                      selectedToggle === 'context'
+                        ? 'bg-white text-gray-900 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    Context
+                  </button>
+                </div>
+              </div>
+              
+              {/* MaxMode Toggle - Positioned in top right */}
+              <div className="absolute top-0 right-0 flex items-center space-x-2 mr-2">
+                <div className="text-right">
+                  <p className="text-sm text-gray-600">MaxMode</p>
+                  <p className="text-xs text-gray-500">Multi-model consensus</p>
+                </div>
+                <Switch 
+                  checked={maxModeEnabled}
+                  onCheckedChange={setMaxModeEnabled}
+                  className="data-[state=checked]:bg-purple-500"
+                />
               </div>
             </div>
 
             {/* Content based on toggle */}
             {selectedToggle === 'rubrics' ? (
               <>
+                {/* Project Context Input */}
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-base font-medium text-gray-900 mb-2">Project Context</h3>
+                    <textarea
+                      value={projectContextInput}
+                      onChange={(e) => setProjectContextInput(e.target.value)}
+                      placeholder="Describe the project, it's concept, value proposition, target market and opportunity"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg resize-none focus:outline-none text-sm"
+                      rows={4}
+                    />
+                  </div>
+                </div>
+
                 {/* File Upload Zone */}
                 <FileUploadZone 
                   onFilesAdded={handleFilesAdded} 
@@ -167,13 +202,13 @@ export default function SetupStep({ onPromptGeneration }: SetupStepProps) {
                     {filesWithChapters.map((item) => (
                       <div key={item.file.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                         <div className="flex items-center space-x-3">
-                          <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
+                          <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
                             <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                             </svg>
                           </div>
                           <div>
-                            <p className="font-medium text-gray-900">{item.file.name}</p>
+                            <p className="font-medium text-base text-gray-900">{item.file.name}</p>
                             <p className="text-sm text-gray-500">{(item.file.size / 1024 / 1024).toFixed(2)} MB</p>
                           </div>
                         </div>
@@ -217,6 +252,31 @@ export default function SetupStep({ onPromptGeneration }: SetupStepProps) {
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* Tool Configuration Section */}
+                {files.length > 0 && (
+                  <div className="border-t border-gray-200 pt-6">
+                    <h3 className="text-base font-medium text-gray-900 mb-4">Tool Configuration</h3>
+                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                          <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                          </svg>
+                        </div>
+                        <div>
+                          <p className="font-medium text-base text-gray-900">Web Search</p>
+                          <p className="text-sm text-gray-500">Enable web search capabilities for enhanced evidence gathering</p>
+                        </div>
+                      </div>
+                      <Switch 
+                        checked={webSearchEnabled}
+                        onCheckedChange={setWebSearchEnabled}
+                        className="data-[state=checked]:bg-blue-600"
+                      />
+                    </div>
                   </div>
                 )}
 

@@ -19,7 +19,7 @@ export function usePromptGeneration() {
   const [chapterPromptStates, setChapterPromptStates] = useState<{ [chapter: string]: ChapterPromptState }>({});
   const [isGenerating, setIsGenerating] = useState(false);
 
-  const generatePrompts = async (extractedDocuments: ExtractedDocument[]) => {
+  const generatePrompts = async (extractedDocuments: ExtractedDocument[], maxMode: boolean = false) => {
     setIsGenerating(true);
     
     // Get unique chapters from extracted documents
@@ -41,8 +41,8 @@ export function usePromptGeneration() {
           throw new Error(`No document found for chapter: ${chapter}`);
         }
 
-        console.log(`Generating prompts for chapter: ${chapter}`);
-        const prompts = await generateFromRubrics(chapterDocument.text);
+        console.log(`Generating prompts for chapter: ${chapter} (maxMode: ${maxMode})`);
+        const prompts = await generateFromRubrics(chapterDocument.text, maxMode);
         
         // Update state with successful result
         setChapterPromptStates(prev => ({

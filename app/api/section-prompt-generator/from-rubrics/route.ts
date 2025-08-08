@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { callOpenRouter } from '@/lib/services/backend/openrouter.service';
 import fs from 'fs';
 import path from 'path';
 
@@ -15,8 +16,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Extract maxMode parameter from URL query (optional, defaults to false)
+    const { searchParams } = new URL(request.url);
+    const maxMode = searchParams.get('maxMode') === 'true';
+
     // Read instructions from JSON file
-    const sectionInstructionsPath = path.join(process.cwd(), 'data', 'instructions', 'section-prompts.json');
+    const sectionInstructionsPath = path.join(process.cwd(), 'data', 'instructions', 'general-prompts.json');
     let instructions = '';
     
     try {
@@ -29,12 +34,6 @@ export async function POST(request: NextRequest) {
         { error: 'Failed to load instructions from data file' },
         { status: 500 }
       );
-    }
-    
-    // 3. Call OpenRouter API
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) {
-      throw new Error('OpenRouter API key is not configured');
     }
 
     const prompt = `
@@ -63,63 +62,67 @@ Format your response as a JSON object with the following fields:
 Verify that the OUTPUT FORMAT is correct and that the JSON is properly formatted. Only return the JSON object, nothing else.
 `;
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'openai/gpt-4.1-mini', // anthropic/claude-opus-4.1 / openai/gpt-4.1-mini
-        messages: [
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        response_format: { type: 'json_object' }
-      })
-    });
+    let parsedResponse;
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`OpenRouter API error: ${errorData.error?.message || response.statusText}`);
+    if (maxMode) {
+      // MaxMode: Call 3 different models and merge results
+      const models = [
+        'anthropic/claude-sonnet-4',
+        'openai/gpt-4.1',
+        'google/gemini-2.5-pro'
+      ];
+
+      console.log('MaxMode enabled: Calling multiple models...');
+      
+      // Call all 3 models in parallel with "one fail all fail" approach
+      const modelPromises = models.map(model => 
+        callOpenRouter(prompt, model, 'json_object')
+      );
+
+      const responses = await Promise.all(modelPromises);
+      
+      // All models must succeed for maxMode to work
+      console.log(`All ${responses.length} models succeeded in maxMode`);
+
+      // Create merge prompt
+      const mergePrompt = `
+You are a response merger. You have received ${responses.length} different AI responses for the same task of generating section prompts for an investment memo.
+
+Your job is to merge these responses into one comprehensive, high-quality result that combines the best aspects of each response.
+
+## RESPONSES TO MERGE:
+${responses.map((response, index) => `
+### Response ${index + 1}:
+${JSON.stringify(response, null, 2)}
+`).join('\n')}
+
+## MERGE INSTRUCTIONS:
+1. Analyze and define matching sections to merge by comparing Names and Roles. Each model was provided with the same rubrics and instructions, sections are likely to match. 
+2. Prioritize best-written and most comprehensive prompts.
+3. Do NOT expand the content of the prompts, only combine them. Do NOT include new information.
+4. Ensure that the merged prompts are coherent and consistent.
+
+## OUTPUT FORMAT:
+Return a JSON object with the exact same structure:
+{
+  "section_prompts": {
+    "section-prompt-1": "Your merged prompt here...",
+    "section-prompt-2": "Your merged prompt here...",
+    ...
+  }
+}
+
+Verify that the OUTPUT FORMAT is correct and that the JSON is properly formatted. Only return the JSON object, nothing else.`;
+
+      console.log('Merging responses from multiple models...');
+      parsedResponse = await callOpenRouter(mergePrompt, 'google/gemini-2.5-pro', 'json_object');
+      
+    } else {
+      // Standard mode: Single model call
+      parsedResponse = await callOpenRouter(prompt, 'openai/gpt-4.1-mini', 'json_object');
     }
-
-    const data = await response.json();
-    const content = data.choices[0].message.content;
-    
-    // Clean the response - remove markdown code blocks if present
-    const cleanJsonResponse = (text: string): string => {
-      // Remove markdown code blocks (```json ... ``` or ``` ... ```)
-      let cleaned = text.trim();
-      
-      // Remove leading ```json, ```JSON, or ``` (case insensitive)
-      cleaned = cleaned.replace(/^```(?:json|JSON)?\s*/i, '');
-      
-      // Remove trailing ```
-      cleaned = cleaned.replace(/\s*```\s*$/, '');
-      
-      // Remove any extra whitespace
-      cleaned = cleaned.trim();
-      
-      // Handle edge case where JSON might be inside other markdown formatting
-      // Look for the first { and last } to extract just the JSON part
-      const firstBrace = cleaned.indexOf('{');
-      const lastBrace = cleaned.lastIndexOf('}');
-      
-      if (firstBrace !== -1 && lastBrace !== -1 && firstBrace < lastBrace) {
-        cleaned = cleaned.substring(firstBrace, lastBrace + 1);
-      }
-      
-      return cleaned;
-    };
-    
-    const cleanedContent = cleanJsonResponse(content);
     
     try {
-      const parsedResponse = JSON.parse(cleanedContent);
-      // Validate the structure of the response
       if (
         parsedResponse.section_prompts && 
         typeof parsedResponse.section_prompts === 'object' &&
@@ -133,8 +136,7 @@ Verify that the OUTPUT FORMAT is correct and that the JSON is properly formatted
       }
     } catch (parseError) {
       console.error('Failed to parse LLM response:', parseError);
-      console.error('Raw content:', content);
-      console.error('Cleaned content:', cleanedContent);
+      console.error('Content:', parsedResponse);
       
       // Provide more helpful error message
       let errorMessage = 'Invalid JSON response from LLM';
