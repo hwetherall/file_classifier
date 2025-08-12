@@ -23,6 +23,8 @@ export default function PromptBuilder() {
   const handlePromptGeneration = async (documents: ExtractedDocument[], webSearch: boolean, maxMode: boolean, projectContextInputValue: string) => {
     setExtractedDocuments(documents);
     setWebSearchEnabled(webSearch);
+
+    setShowResults(true);
     
     // Trigger project context generation
     await generateContext(projectContextInputValue.trim());
@@ -32,7 +34,6 @@ export default function PromptBuilder() {
     
     // Trigger prompt generation (don't await - let it run in background)
     generatePrompts(documents, contextParagraph, maxMode);
-    setShowResults(true);
   };
 
   const handleBackToUpload = () => {

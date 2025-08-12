@@ -16,13 +16,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!body.context || typeof body.context !== 'string' || !body.context.trim()) {
-      return Response.json(
-        { error: 'Context is required and must be a non-empty string' },
-        { status: 400 }
-      );
-    }
-
     // Extract maxMode parameter from URL query (optional, defaults to false)
     const { searchParams } = new URL(request.url);
     const maxMode = searchParams.get('maxMode') === 'true';
@@ -46,15 +39,15 @@ export async function POST(request: NextRequest) {
     const prompt = `
 You are a prompt generation assistant. Your task is to create the prompts for several sections of a chapter in an investment memo. 
 
-Analyze the RUBRICS to define the sections that should be created. Then, for each section, follow the INSTRUCTIONS to write those sections as prompts. A section prompt is a prompt that will be used to generate a section of the investment memo. Additional context for the prompt generation is provided in CONTEXT.
+Analyze the RUBRICS to define the sections that should be created. Then, for each section, follow the INSTRUCTIONS to write those sections as prompts. A section prompt is a prompt that will be used to generate a section of the investment memo. Additional context for the prompt generation is provided in ADDITIONAL CONTEXT. The additional context is to be used for specificity, never to expand scope.
 
 Ensure to follow the INSTRUCTIONS.
 
-## CONTEXT:
-${body.context}
-
 ## RUBRICS:
 ${body.rubrics}
+
+## ADDITIONAL CONTEXT:
+${body.context ? body.context : 'No additional context provided.'}
 
 ## INSTRUCTIONS:
 ${instructions}

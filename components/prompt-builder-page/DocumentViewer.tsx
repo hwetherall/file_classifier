@@ -38,6 +38,8 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
     isOpen: false,
     snippetName: ''
   });
+  const [copySuccess, setCopySuccess] = useState<boolean>(false);
+  const [snippets, setSnippets] = useState<{ [key: string]: string }>({});
 
   // Get unique chapters from extracted documents
   const availableChapters = useMemo(() => 
@@ -61,7 +63,21 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
       }
     };
 
+    const loadSnippets = async () => {
+      try {
+        const response = await fetch('/data/prompt_builder/snippets.json');
+        if (!response.ok) {
+          throw new Error('Failed to load snippets');
+        }
+        const data = await response.json();
+        setSnippets(data);
+      } catch (error) {
+        console.error('Error loading snippets:', error);
+      }
+    };
+
     loadTemplateData();
+    loadSnippets();
   }, []);
 
   // Calculate visual lines for a single paragraph (reusable function)
@@ -337,6 +353,73 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
     setSnippetPopup(prev => ({ ...prev, isOpen: false }));
   }, []);
 
+  // Function to replace snippet placeholders with actual content
+  const replaceSnippets = useCallback((text: string): string => {
+    let processedText = text;
+    
+    // First apply web search filtering
+    processedText = filterSnippets(processedText);
+    
+    // Replace snippet placeholders with their actual content
+    processedText = processedText.replace(
+      /\{\{>([^}]+)\}\}/g,
+      (match, snippetName) => {
+        const snippetContent = snippets[snippetName];
+        return snippetContent || match; // Keep original if snippet not found
+      }
+    );
+    
+    return processedText;
+  }, [snippets, filterSnippets]);
+
+  // Function to strip HTML tags and get plain text
+  const stripHtmlTags = useCallback((html: string): string => {
+    // Create a temporary div element to parse HTML
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+    
+    // Get text content and clean up extra whitespace
+    return tempDiv.textContent || tempDiv.innerText || '';
+  }, []);
+
+  // Function to copy text to clipboard
+  const copyToClipboard = useCallback(async () => {
+    const filledTemplate = filledTemplates[selectedChapter];
+    if (!filledTemplate) return;
+
+    try {
+      // First replace snippets with their actual content, then strip HTML tags
+      const textWithSnippets = replaceSnippets(filledTemplate);
+      const plainText = stripHtmlTags(textWithSnippets);
+      
+      // Copy to clipboard
+      await navigator.clipboard.writeText(plainText);
+      
+      // Show success feedback
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy text to clipboard:', error);
+      // Fallback for older browsers
+      try {
+        const textWithSnippets = replaceSnippets(filledTemplate);
+        const plainText = stripHtmlTags(textWithSnippets);
+        const textArea = document.createElement('textarea');
+        textArea.value = plainText;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        
+        // Show success feedback for fallback method too
+        setCopySuccess(true);
+        setTimeout(() => setCopySuccess(false), 2000);
+      } catch (fallbackError) {
+        console.error('Fallback copy method also failed:', fallbackError);
+      }
+    }
+  }, [filledTemplates, selectedChapter, stripHtmlTags, replaceSnippets]);
+
   // Set initial chapter selection
   useEffect(() => {
     if (availableChapters.length > 0 && !selectedChapter) {
@@ -404,7 +487,10 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
                         </svg>
                       </div>
                     )}
-                    {promptState?.prompts && !promptState.loading && !promptState.error && (
+                    {promptState?.prompts && !promptState.loading && !promptState.error && projectContextState.loading && (
+                      <div className="animate-spin rounded-full h-3 w-3 border border-blue-600 border-t-transparent"></div>
+                    )}
+                    {promptState?.prompts && !promptState.loading && !promptState.error && !projectContextState.loading && (
                       <div className="flex items-center">
                         <svg className="w-3 h-3 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -424,13 +510,45 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
       <div className="flex-1 flex flex-col min-h-screen">
         {/* Header - Google Docs style */}
         <div className="bg-white border-b border-gray-100 px-6 py-3">
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center justify-between">
             <div>
               <h1 className="text-lg font-normal text-gray-800">
                 {selectedChapter || 'Select a Chapter'}
               </h1>
               <p className="text-sm text-gray-500">Dynamically generated chapter prompt</p>
             </div>
+            
+            {/* Copy Button */}
+            {selectedChapter && filledTemplates[selectedChapter] && 
+             chapterPromptStates[selectedChapter]?.prompts && 
+             !chapterPromptStates[selectedChapter]?.loading && 
+             !projectContextState.loading && (
+              <button
+                onClick={copyToClipboard}
+                className={`flex items-center space-x-2 px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                  copySuccess 
+                    ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' 
+                    : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                }`}
+                title="Copy prompt without HTML tags"
+              >
+                {copySuccess ? (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    <span>Copy Prompt</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
 
@@ -441,7 +559,7 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
             <div className="max-w-[8.5in] mx-auto">
               {selectedChapter ? (
                 <>
-                  {/* Loading state */}
+                  {/* Loading state - Prompt Generation */}
                   {chapterPromptStates[selectedChapter]?.loading && (
                     <div className="bg-white shadow-sm border border-gray-200 mx-auto mb-6 py-[80px] px-[80px]"
                          style={{ width: '8.5in', height: '11in' }}>
@@ -464,6 +582,34 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
                           </svg>
                           <h3 className="text-lg font-medium text-gray-800 mb-2">Generating Prompts</h3>
                           <p className="text-gray-600">Creating dynamic prompts for {selectedChapter} chapter...</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Loading state - Project Context Generation */}
+                  {chapterPromptStates[selectedChapter]?.prompts && !chapterPromptStates[selectedChapter]?.loading && projectContextState.loading && (
+                    <div className="bg-white shadow-sm border border-gray-200 mx-auto mb-6 py-[80px] px-[80px]"
+                         style={{ width: '8.5in', height: '11in' }}>
+                      <div className="pt-20">
+                        <div className="text-center">
+                          <svg className="w-8 h-8 text-blue-500 animate-spin mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+                            <circle
+                              className="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              strokeWidth="4"
+                            />
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            />
+                          </svg>
+                          <h3 className="text-lg font-medium text-gray-800 mb-2">Generating Project Context</h3>
+                          <p className="text-gray-600">Processing your project information to create the project context paragraph...</p>
                         </div>
                       </div>
                     </div>
@@ -492,7 +638,7 @@ export default function DocumentViewer({ extractedDocuments, chapterPromptStates
                   )}
                   
                   {/* Display filled template */}
-                  {chapterPromptStates[selectedChapter]?.prompts && !chapterPromptStates[selectedChapter]?.loading && 
+                  {chapterPromptStates[selectedChapter]?.prompts && !chapterPromptStates[selectedChapter]?.loading && !projectContextState.loading &&
                     (() => {
                       const filledTemplate = filledTemplates[selectedChapter];
                       
