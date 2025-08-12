@@ -52,7 +52,7 @@ Verify that the OUTPUT FORMAT is correct and that the JSON is properly formatted
 `;
    
     // Standard mode: Single model call
-    const parsedResponse = await callOpenRouter(prompt, 'openai/gpt-4.1-mini', 'json_object');
+    const parsedResponse = await callOpenRouter(prompt, 'openai/gpt-5-mini', 'json_object');
 
     try {
       if (parsedResponse.response) {

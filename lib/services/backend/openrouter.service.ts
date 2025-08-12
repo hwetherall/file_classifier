@@ -58,7 +58,13 @@ export async function callOpenRouter(prompt: string, model: string, response_for
 
         if (response_format === 'json_object') {
             if (!data.choices?.[0]?.message?.content) {
-                throw new Error('Invalid response structure: missing content');
+                throw new Error(`Invalid response structure: missing content. Response structure: ${JSON.stringify({
+                    hasChoices: !!data.choices,
+                    choicesLength: data.choices?.length,
+                    firstChoice: data.choices?.[0] ? Object.keys(data.choices[0]) : 'undefined',
+                    hasMessage: !!data.choices?.[0]?.message,
+                    messageKeys: data.choices?.[0]?.message ? Object.keys(data.choices[0].message) : 'undefined'
+                })}`);
             }
             
             const content = data.choices[0].message.content;

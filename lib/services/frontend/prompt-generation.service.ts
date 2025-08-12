@@ -8,7 +8,7 @@ interface SectionPrompts {
  * @param maxMode - Whether to use multi-model consensus (defaults to false)
  * @returns Promise with section prompts object
  */
-export async function generateFromRubrics(rubrics: string, maxMode: boolean = false): Promise<SectionPrompts> {
+export async function generateFromRubrics(rubrics: string, context: string, maxMode: boolean = false): Promise<SectionPrompts> {
   try {
 
     // Make API call
@@ -18,6 +18,7 @@ export async function generateFromRubrics(rubrics: string, maxMode: boolean = fa
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
+        context: context.trim(),
         rubrics: rubrics.trim()
       })
     });

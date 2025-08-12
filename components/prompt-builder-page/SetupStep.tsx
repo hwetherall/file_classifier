@@ -12,10 +12,11 @@ type ToggleState = 'rubrics' | 'context';
 interface FileWithChapter {
   file: DocumentFile;
   selectedChapter: string;
+  fileType: 'rubric' | 'context';
 }
 
 interface SetupStepProps {
-  onPromptGeneration: (extractedDocuments: { fileName: string; chapter: string; text: string }[], webSearchEnabled: boolean, maxModeEnabled: boolean, projectContextInputValue: string) => void;
+  onPromptGeneration: (extractedDocuments: { fileName: string; chapter: string; text: string; fileType: 'rubric' | 'context' }[], webSearchEnabled: boolean, maxModeEnabled: boolean, projectContextInputValue: string) => void;
 }
 
 export default function SetupStep({ onPromptGeneration }: SetupStepProps) {
@@ -63,33 +64,129 @@ export default function SetupStep({ onPromptGeneration }: SetupStepProps) {
   const handleFilesAdded = (newFiles: DocumentFile[]) => {
     setFiles(prev => [...prev, ...newFiles]);
     
-    // Add new files with empty chapter selection
+    // Add new files with empty chapter selection and default to rubric type
     const newFilesWithChapters = newFiles.map(file => ({
       file,
-      selectedChapter: ''
+      selectedChapter: '',
+      fileType: 'rubric' as const
     }));
     
-    setFilesWithChapters(prev => [...prev, ...newFilesWithChapters]);
+    setFilesWithChapters(prev => {
+      const updatedFiles = [...prev, ...newFilesWithChapters];
+      // Validate conditions after adding files
+      validateSelections(updatedFiles);
+      return updatedFiles;
+    });
   };
 
   const handleRemoveFile = (fileId: string) => {
     setFiles(prev => prev.filter(file => file.id !== fileId));
-    setFilesWithChapters(prev => prev.filter(item => item.file.id !== fileId));
+    setFilesWithChapters(prev => {
+      const updatedFiles = prev.filter(item => item.file.id !== fileId);
+      // Validate conditions after removal
+      validateSelections(updatedFiles);
+      return updatedFiles;
+    });
+  };
+
+  // Validation function to check if all conditions are met
+  const validateSelections = (files: FileWithChapter[]) => {
+    if (files.length === 0) return;
+
+    // Check for duplicate rubric chapters
+    const rubricChapters: { [chapter: string]: string[] } = {};
+    files.forEach(item => {
+      if (item.fileType === 'rubric' && item.selectedChapter) {
+        if (!rubricChapters[item.selectedChapter]) {
+          rubricChapters[item.selectedChapter] = [];
+        }
+        rubricChapters[item.selectedChapter].push(item.file.name);
+      }
+    });
+
+    // Check for conflicts and log warnings
+    Object.entries(rubricChapters).forEach(([chapter, fileNames]) => {
+      if (fileNames.length > 1) {
+        console.warn(`Duplicate rubric chapter detected: "${chapter}" assigned to files: ${fileNames.join(', ')}`);
+      }
+    });
+
+    // Check if all files have chapters selected
+    const unassignedFiles = files.filter(item => !item.selectedChapter);
+    if (unassignedFiles.length > 0) {
+      console.log(`Files without chapters: ${unassignedFiles.map(item => item.file.name).join(', ')}`);
+    }
+
+    // Check if each selected chapter has at least one rubric
+    const selectedChapters = [...new Set(files.map(item => item.selectedChapter).filter(Boolean))];
+    const chaptersWithoutRubrics = selectedChapters.filter(chapter => 
+      !files.some(item => item.selectedChapter === chapter && item.fileType === 'rubric')
+    );
+    
+    if (chaptersWithoutRubrics.length > 0) {
+      console.warn(`Chapters without rubric files: ${chaptersWithoutRubrics.join(', ')}`);
+    }
+
+    // Log validation summary
+    console.log('Validation Summary:', {
+      totalFiles: files.length,
+      rubricFiles: files.filter(f => f.fileType === 'rubric').length,
+      contextFiles: files.filter(f => f.fileType === 'context').length,
+      assignedFiles: files.filter(f => f.selectedChapter).length,
+      uniqueChapters: selectedChapters.length,
+      duplicateRubricChapters: Object.keys(rubricChapters).filter(chapter => rubricChapters[chapter].length > 1),
+      chaptersWithoutRubrics
+    });
   };
 
   const handleChapterChange = (fileId: string, chapter: string) => {
-    setFilesWithChapters(prev =>
-      prev.map(item => {
-        // If selecting a new chapter, clear it from any other file first
+    setFilesWithChapters(prev => {
+      const updatedFiles = prev.map(item => {
+        // If selecting a new chapter, clear it from any other RUBRIC file first
         if (item.file.id === fileId) {
           return { ...item, selectedChapter: chapter };
-        } else if (item.selectedChapter === chapter && chapter !== '') {
-          // Clear this chapter from other files since only one file per chapter allowed
-          return { ...item, selectedChapter: '' };
+        } else if (item.selectedChapter === chapter && chapter !== '' && item.fileType === 'rubric') {
+          // Find the file being updated to check its type
+          const updatingFile = prev.find(f => f.file.id === fileId);
+          // Only clear this chapter from other rubric files if the updating file is also a rubric
+          if (updatingFile?.fileType === 'rubric') {
+            return { ...item, selectedChapter: '' };
+          }
         }
         return item;
-      })
-    );
+      });
+      
+      // Validate conditions after update
+      validateSelections(updatedFiles);
+      return updatedFiles;
+    });
+  };
+
+  const handleFileTypeChange = (fileId: string, fileType: 'rubric' | 'context') => {
+    setFilesWithChapters(prev => {
+      const updatedFiles = prev.map(item => {
+        if (item.file.id === fileId) {
+          // Clear chapter selection if switching to rubric and chapter is already taken by another rubric
+          const currentChapter = item.selectedChapter;
+          if (fileType === 'rubric' && currentChapter) {
+            const isChapterTakenByOtherRubric = prev.some(
+              otherItem => otherItem.file.id !== fileId && 
+                         otherItem.selectedChapter === currentChapter && 
+                         otherItem.fileType === 'rubric'
+            );
+            if (isChapterTakenByOtherRubric) {
+              return { ...item, fileType, selectedChapter: '' };
+            }
+          }
+          return { ...item, fileType };
+        }
+        return item;
+      });
+      
+      // Validate conditions after update
+      validateSelections(updatedFiles);
+      return updatedFiles;
+    });
   };
 
   const handlePitchDeckUpload = async (files: File[]) => {
@@ -135,7 +232,7 @@ export default function SetupStep({ onPromptGeneration }: SetupStepProps) {
       console.log('Starting prompt generation for:', filesWithChapters);
       
       // Extract text from all files
-      const extractedTexts: { fileName: string; chapter: string; text: string }[] = [];
+      const extractedTexts: { fileName: string; chapter: string; text: string; fileType: 'rubric' | 'context' }[] = [];
       
       for (const item of filesWithChapters) {
         try {
@@ -145,7 +242,8 @@ export default function SetupStep({ onPromptGeneration }: SetupStepProps) {
           extractedTexts.push({
             fileName: item.file.name,
             chapter: item.selectedChapter,
-            text: text
+            text: text,
+            fileType: item.fileType
           });
           
         } catch (error) {
@@ -300,14 +398,20 @@ export default function SetupStep({ onPromptGeneration }: SetupStepProps) {
                     {filesWithChapters.map((item) => (
                       <div key={item.file.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                         <div className="flex items-center space-x-3">
-                          <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
-                            <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                            item.fileType === 'rubric' ? 'bg-green-100' : 'bg-blue-100'
+                          }`}>
+                            <svg className={`w-4 h-4 ${
+                              item.fileType === 'rubric' ? 'text-green-600' : 'text-blue-600'
+                            }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                             </svg>
                           </div>
                           <div>
                             <p className="font-medium text-sm text-gray-900">{item.file.name}</p>
-                            <p className="text-xs text-gray-500">{(item.file.size / 1024 / 1024).toFixed(2)} MB</p>
+                            <p className="text-xs text-gray-500">
+                              {(item.file.size / 1024 / 1024).toFixed(2)} MB • {item.fileType === 'rubric' ? 'Rubric' : 'Context'}
+                            </p>
                           </div>
                         </div>
                         
@@ -321,13 +425,15 @@ export default function SetupStep({ onPromptGeneration }: SetupStepProps) {
                           >
                             <option value="" className="text-gray-500">Select Chapter</option>
                             {chapters.map((chapter) => {
-                              // Check if this chapter is already selected by another file
-                              const isChapterTaken = filesWithChapters.some(
-                                otherItem => otherItem.file.id !== item.file.id && otherItem.selectedChapter === chapter
+                              // Check if this chapter is already selected by another RUBRIC file
+                              const isChapterTakenByRubric = item.fileType === 'rubric' && filesWithChapters.some(
+                                otherItem => otherItem.file.id !== item.file.id && 
+                                           otherItem.selectedChapter === chapter && 
+                                           otherItem.fileType === 'rubric'
                               );
                               // Check if this chapter is available (has content)
                               const isChapterAvailable = chapterAvailability[chapter];
-                              const isDisabled = isChapterTaken || !isChapterAvailable;
+                              const isDisabled = isChapterTakenByRubric || !isChapterAvailable;
                               
                               return (
                                 <option 
@@ -341,6 +447,29 @@ export default function SetupStep({ onPromptGeneration }: SetupStepProps) {
                               );
                             })}
                           </select>
+
+                          {/* File Type Toggle Icon */}
+                          <button
+                            onClick={() => handleFileTypeChange(item.file.id, item.fileType === 'rubric' ? 'context' : 'rubric')}
+                            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+                              item.fileType === 'rubric' 
+                                ? 'bg-green-100 text-green-600 hover:bg-green-200' 
+                                : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                            }`}
+                            title={`Switch to ${item.fileType === 'rubric' ? 'Context' : 'Rubric'}`}
+                          >
+                            {item.fileType === 'rubric' ? (
+                              // Rubric icon (checklist/clipboard)
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                              </svg>
+                            ) : (
+                              // Context icon (document/info)
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                            )}
+                          </button>
                           
                           {/* Remove Button */}
                           <button

@@ -10,6 +10,7 @@ interface ExtractedDocument {
   fileName: string;
   chapter: string;
   text: string;
+  fileType: 'rubric' | 'context';
 }
 
 export default function PromptBuilder() {
@@ -23,11 +24,14 @@ export default function PromptBuilder() {
     setExtractedDocuments(documents);
     setWebSearchEnabled(webSearch);
     
-    // Trigger project context generation if input is provided (don't wait)
-    generateContext(projectContextInputValue.trim());
+    // Trigger project context generation
+    await generateContext(projectContextInputValue.trim());
+    
+    // Use the generated context from state (fallback to empty string if not available)
+    const contextParagraph = projectContextState.context || "";
     
     // Trigger prompt generation (don't await - let it run in background)
-    generatePrompts(documents, maxMode);
+    generatePrompts(documents, contextParagraph, maxMode);
     setShowResults(true);
   };
 

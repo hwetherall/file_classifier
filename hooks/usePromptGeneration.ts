@@ -7,6 +7,7 @@ interface ExtractedDocument {
   fileName: string;
   chapter: string;
   text: string;
+  fileType: 'rubric' | 'context';
 }
 
 interface ChapterPromptState {
@@ -19,7 +20,7 @@ export function usePromptGeneration() {
   const [chapterPromptStates, setChapterPromptStates] = useState<{ [chapter: string]: ChapterPromptState }>({});
   const [isGenerating, setIsGenerating] = useState(false);
 
-  const generatePrompts = async (extractedDocuments: ExtractedDocument[], maxMode: boolean = false) => {
+  const generatePrompts = async (extractedDocuments: ExtractedDocument[], contextParagraph: string, maxMode: boolean = false) => {
     setIsGenerating(true);
     
     // Get unique chapters from extracted documents
@@ -35,14 +36,23 @@ export function usePromptGeneration() {
     // Generate prompts for each chapter in parallel
     const promptPromises = chapters.map(async (chapter) => {
       try {
-        // Get the text content for this chapter (rubrics)
-        const chapterDocument = extractedDocuments.find(doc => doc.chapter === chapter);
-        if (!chapterDocument) {
-          throw new Error(`No document found for chapter: ${chapter}`);
+        // Get the rubric document for this chapter
+        const rubricDocument = extractedDocuments.find(doc => doc.chapter === chapter && doc.fileType === 'rubric');
+        if (!rubricDocument) {
+          throw new Error(`No rubric document found for chapter: ${chapter}`);
         }
 
+        // Get all context documents for this chapter (if any)
+        const contextDocuments = extractedDocuments.filter(doc => doc.chapter === chapter && doc.fileType === 'context');
+        const contextText = contextDocuments.map(doc => `${doc.fileName}:\n${doc.text}`).join('\n\n');
+        
+        // Combine rubric text with context text for enhanced prompt generation
+        const context = contextText 
+          ? `Overall Project Context:\n${contextParagraph}\n\n=== ADDITIONAL CONTEXT ===\n${contextText}`
+          : contextParagraph;
+
         console.log(`Generating prompts for chapter: ${chapter} (maxMode: ${maxMode})`);
-        const prompts = await generateFromRubrics(chapterDocument.text, maxMode);
+        const prompts = await generateFromRubrics(rubricDocument.text, context, maxMode);
         
         // Update state with successful result
         setChapterPromptStates(prev => ({
