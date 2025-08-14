@@ -26,11 +26,8 @@ export default function PromptBuilder() {
 
     setShowResults(true);
     
-    // Trigger project context generation
-    await generateContext(projectContextInputValue.trim());
-    
-    // Use the generated context from state (fallback to empty string if not available)
-    const contextParagraph = projectContextState.context || "";
+    // Trigger project context generation and wait for it to complete
+    const contextParagraph = await generateContext(projectContextInputValue.trim());
     
     // Trigger prompt generation (don't await - let it run in background)
     generatePrompts(documents, contextParagraph, maxMode);

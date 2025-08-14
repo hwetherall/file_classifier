@@ -70,7 +70,7 @@ Verify that the OUTPUT FORMAT is correct and that the JSON is properly formatted
     if (maxMode) {
       // MaxMode: Call 3 different models and merge results
       const models = [
-        'anthropic/claude-sonnet-4',
+        'anthropic/claude-opus-4.1',
         'openai/gpt-5',
         'google/gemini-2.5-pro'
       ];

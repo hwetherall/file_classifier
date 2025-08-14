@@ -14,7 +14,7 @@ export function useProjectContext() {
     loading: false
   });
 
-  const generateContext = async (inputContext: string): Promise<void> => {
+  const generateContext = async (inputContext: string): Promise<string> => {
     try {
       setProjectContextState({ loading: true });
       
@@ -27,6 +27,7 @@ export function useProjectContext() {
       });
       
       console.log('Project context generated successfully');
+      return generatedContext;
     } catch (error) {
       console.error('Failed to generate project context:', error);
       
@@ -34,6 +35,7 @@ export function useProjectContext() {
         loading: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred'
       });
+      throw error;
     }
   };
 
